@@ -219,8 +219,13 @@ The **full 41-country run** (`run_paper_scenario.py`) could not be checked
 against Octave the same way, since Octave itself cannot run it in this
 environment (the ~30GB `AES_N_Mat` allocation fails) — this is a genuine
 resource constraint of the original model at this scale, not a gap specific
-to the Python side. Given the exact match at every other layer and scale,
-the full run is expected to reproduce the paper's Table 2 column (2) /
-Appendix Table 1 to a similar precision, but this specific claim is not
-independently verified against MATLAB output the way everything else here
-is.
+to the Python side. It was, however, actually run end to end (~20 minutes,
+see `baqaee_farhi_model/paper_scenario_result.json`): with the paper's exact
+settings (all 41 WIOD countries + ROW, EU iceberg cost on Russia,
+`ngrid=20`, `intensity=150`), it gives a Germany GNE loss of **-0.257%**,
+matching the paper's own stated Table 2 column (2) figure of **0.2-0.3%**
+almost exactly, and a Russia GNE loss of -2.27% (Russia bears the brunt of
+being cut off from EU export markets, as expected). Given this and the exact
+match at every other layer and scale, the full run is taken as a faithful
+reproduction, even though — for the reason above — it isn't checked bit-for-
+bit against MATLAB output the way everything else here is.
