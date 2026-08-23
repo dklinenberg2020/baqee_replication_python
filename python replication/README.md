@@ -12,6 +12,12 @@ original MATLAB code, run under GNU Octave 8.4.0 in this same environment
 matches. Nothing here is a re-implementation from the paper's description;
 it is a translation of the original code, checked line-by-line against it.
 
+For a fast, closed-form alternative to running the simulations here (the
+paper's own second-order approximation and its general calibration
+procedure, no CES optimization or network simulation required), see
+`../python-second-order/` (or `../r-second-order/` for R) — see also
+`../README.md` for how all four packages relate.
+
 ## Contents
 
 ```
