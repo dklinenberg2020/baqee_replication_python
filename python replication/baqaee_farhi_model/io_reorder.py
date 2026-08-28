@@ -260,4 +260,16 @@ def io_reorder(keep_c, data_dir='.'):
 
     trade_elast = np.concatenate([trade_elast_2008[:8], trade_elast_2008[9:]])
 
+    # WIOD SEA's medium-skill/high-skill columns are in the opposite order
+    # from what main_load_data.py's standard-form construction expects --
+    # this is a WIOD-specific data-semantics fix, not a generic model step,
+    # so it belongs here (in the WIOD-specific loader) rather than in the
+    # source-agnostic main_load_data(). A different source's own loader is
+    # responsible for handing its own alpha_VA columns to main_load_data()
+    # in whatever order that source's own factor categories are meant to be
+    # used in -- there is no universal "correct" factor-column order beyond
+    # whatever the source loader itself defines.
+    alpha_VA = alpha_VA.copy()
+    alpha_VA[:, [2, 3]] = alpha_VA[:, [3, 2]]
+
     return Omega, beta, alpha_VA, alpha, trade_elast, GDP_weights

@@ -30,20 +30,22 @@ import io_reorder as _io_reorder
 import nested_ces as _nested_ces
 
 
-def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05, data_dir=None):
-    """See run_model.run()'s docstring for the `shocks` format. `data_dir`
-    defaults to this package's own directory (where the .mat files live)
-    rather than the caller's cwd."""
+def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05, data_dir=None, haio=None):
+    """See run_model.run()'s docstring for the `shocks` format and for what
+    passing `haio` directly (a non-WIOD dataset) does. `data_dir` defaults
+    to this package's own directory (where the .mat files live) rather than
+    the caller's cwd; irrelevant when `haio` is given."""
     return _run_model.run(keep_c, shocks, ngrid=ngrid, sigma=sigma, theta=theta,
-                           gamma=gamma, epsilon=epsilon, data_dir=data_dir or _PKG_DIR)
+                           gamma=gamma, epsilon=epsilon, data_dir=data_dir or _PKG_DIR, haio=haio)
 
 
 def run_scenario(keep_c, countries, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05,
-                  data_dir=None):
+                  data_dir=None, haio=None):
     """See run_model.run_scenario()'s docstring. `data_dir` defaults to this
-    package's own directory rather than the caller's cwd."""
+    package's own directory rather than the caller's cwd; irrelevant when
+    `haio` is given."""
     return _run_model.run_scenario(keep_c, countries, shocks, ngrid=ngrid, sigma=sigma, theta=theta,
-                                    gamma=gamma, epsilon=epsilon, data_dir=data_dir or _PKG_DIR)
+                                    gamma=gamma, epsilon=epsilon, data_dir=data_dir or _PKG_DIR, haio=haio)
 
 
 main_load_data = _main_load_data.main_load_data

@@ -13,21 +13,35 @@ approximate the effect of a *large* shock (here, an iceberg trade cost large
 enough to send EU-Russia trade to roughly zero).
 """
 import numpy as np
+from io_reorder import io_reorder
 from main_load_data import main_load_data
 from nested_ces import value_added_shares, response, solve_dlambda_F_all
 
 
 def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05,
-        data_dir='.'):
+        data_dir='.', haio=None):
     """
     Parameters
     ----------
     keep_c : 1-indexed WIOD country numbers to track individually (ROW=35
-        excluded, appended automatically as the last country).
+        excluded, appended automatically as the last country). Ignored if
+        `haio` is given directly.
+    haio : optional pre-built standardized "BF HAIO" dict (see
+        main_load_data.py's module docstring for the exact six-key
+        contract: C, Omega, beta, alpha, alpha_VA, trade_elast,
+        GDP_weights). Pass this instead of relying on `keep_c` to run the
+        model on a non-WIOD dataset (GTAP, OECD ICIO, ...) without touching
+        this function at all -- when given, `keep_c` and `data_dir` are
+        ignored and `io_reorder()` (the WIOD-specific loader) is never
+        called. A source-specific loader only needs to produce this dict;
+        everything downstream of it (this function, nested_ces.py) is
+        already source-agnostic.
     shocks : list of dicts, each describing one iceberg-cost shock leg. All
-        country positions below are 1-indexed *positions within keep_c* (not
-        WIOD country numbers), matching keep_c itself -- e.g. sellers=[3]
-        means the 3rd entry of keep_c, not WIOD country 3. Each leg:
+        country positions below are 1-indexed positions within whichever
+        country ordering the data uses (keep_c's order for the WIOD path,
+        or `haio['GDP_weights']`'s/`haio['Omega']`'s implied order for a
+        directly-supplied haio) -- e.g. sellers=[3] means the 3rd country in
+        that ordering, not a WIOD country code. Each leg:
             'sellers'   : positions of the seller country/countries whose
                           exports become more costly to buy (required).
             'buyers'    : positions of the buyer country/countries facing
@@ -51,7 +65,11 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
     dlogW_sum : (C,) array, cumulative log change in real income by country
         (last entry is the appended ROW country).
     """
-    data, shock = main_load_data(keep_c, 1, 2, data_dir=data_dir)
+    if haio is None:
+        Omega, beta, alpha_VA, alpha, trade_elast, GDP_weights = io_reorder(keep_c, data_dir=data_dir)
+        haio = dict(C=len(keep_c) + 1, Omega=Omega, beta=beta, alpha=alpha,
+                    alpha_VA=alpha_VA, trade_elast=trade_elast, GDP_weights=GDP_weights)
+    data, shock = main_load_data(haio, 1, 2)
     C, N, CN, CF = data['C'], data['N'], data['CN'], data['CF']
     data['sigma'], data['theta'], data['gamma'], data['epsilon'] = sigma, theta, gamma, epsilon
 
@@ -140,13 +158,14 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
 
 
 def run_scenario(keep_c, countries, shocks, ngrid=20,
-                  sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05, data_dir='.'):
+                  sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05, data_dir='.', haio=None):
     """Convenience wrapper around `run()` for one-off scenario calls: runs the
     model and returns log GNE changes (dlogW, NOT percent -- multiply by 100
     yourself for a percentage) labeled by country code, the GNE-weighted
     world aggregate (same units), and the elasticity parameters that produced
     them, so a result is self-describing without needing to track down which
-    run() call it came from. See `run()`'s docstring for the `shocks` format.
+    run() call it came from. See `run()`'s docstring for the `shocks` format
+    and for what passing `haio` directly (a non-WIOD dataset) does.
 
     Returns
     -------
@@ -158,7 +177,7 @@ def run_scenario(keep_c, countries, shocks, ngrid=20,
     """
     dlogW_sum, data = run(keep_c, shocks, ngrid=ngrid,
                            sigma=sigma, theta=theta, gamma=gamma, epsilon=epsilon,
-                           data_dir=data_dir)
+                           data_dir=data_dir, haio=haio)
     GNE_weights = data['chi_std'][:data['C']]
     world = GNE_weights @ dlogW_sum
     return dict(

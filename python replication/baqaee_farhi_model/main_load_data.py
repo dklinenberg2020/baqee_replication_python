@@ -4,38 +4,68 @@ Python translation of replication/baqaee_farhi_model/main_load_data_rev.m
 never uses the with-tariff path, so IO_reorder_init_tariff.m is not ported;
 see baqaee_farhi_model/README.md).
 
-Turns the country x sector input-output table from io_reorder() into the
-"standard form" world economy used by the linearized nested-CES model: a
-single (L, L) Markov-like matrix Omega_total_tilde stacking household
-consumption, intermediate/factor purchases by producers, and a zero block
-for (endowed) factors, where L = C + C*N + C*F, plus its Leontief inverse
-Psi_total and the implied sales/income shares chi_std, lambda_std.
+Turns a standardized "BF HAIO" (Homothetic Aggregate Input-Output) matrix
+bundle into the "standard form" world economy used by the linearized
+nested-CES model: a single (L, L) Markov-like matrix Omega_total_tilde
+stacking household consumption, intermediate/factor purchases by producers,
+and a zero block for (endowed) factors, where L = C + C*N + C*F, plus its
+Leontief inverse Psi_total and the implied sales/income shares chi_std,
+lambda_std.
+
+THE HAIO CONTRACT: this function is deliberately source-agnostic -- it knows
+nothing about WIOD, GTAP, or OECD ICIO specifically, only the six-object
+`haio` dict below (named after the theory paper's own term for this object,
+Appendix D/E of Baqaee & Farhi's "Networks, Barriers, and Trade"). Any
+dataset can plug into this model by writing a loader that produces this
+dict; `io_reorder.py` is the WIOD implementation of that contract. N
+(sectors per country) and the number of factor categories the source
+provides are inferred from the arrays' own shapes, never hardcoded, so this
+function works unchanged for a source with a different sector count than
+WIOD's 30 or a different factor-category count than WIOD SEA's 4.
+
+    haio['C']           : int, number of countries (including any
+                           aggregate "rest of world" composite -- the
+                           source loader decides what counts as a country).
+    haio['Omega']        : (C*N, C*N) array, (i,j) = expenditure share of
+                            producer i on good j (intermediate input shares).
+    haio['beta']         : (C*N, C) array, (i,c) = expenditure share of
+                            household c on good i (final consumption shares).
+    haio['alpha']        : (C*N,) array, value-added share of producer i.
+    haio['alpha_VA']     : (C*N, F_data) array, producer i's expenditure
+                            share on primary factor f, for whatever F_data
+                            factor categories the source provides (WIOD: 4
+                            labor/capital categories via WIOD SEA). A source
+                            with no factor breakdown at all can pass a
+                            single all-ones column (F_data = 1).
+    haio['trade_elast']  : (N,) array, cross-country trade elasticity by
+                            sector (matches AES_func.m's own +1 convention,
+                            see nested_ces.py).
+    haio['GDP_weights']  : (C,) array, each country's GDP/GNE share of
+                            world GDP/GNE, normalized to sum to 1.
 
 Validated element-wise against the original MATLAB code (GNU Octave 8.4.0)
 for the full 41-country, country-sector-specific-factor run -- see
 baqaee_farhi_model/README.md.
 """
 import numpy as np
-from io_reorder import io_reorder
 
 
-def main_load_data(keep_c, initial_tariff_index, factor_index, data_dir='.'):
+def main_load_data(haio, initial_tariff_index, factor_index):
     if initial_tariff_index != 1:
         raise NotImplementedError(
             'initial_tariff_index == 2 (with initial tariffs) is not ported; '
             'the paper\'s main driver script only uses initial_tariff_index == 1.')
 
-    Omega, beta, alpha_VA, alpha, trade_elast, GDP_weights = io_reorder(keep_c, data_dir=data_dir)
-    Omega_tilde = Omega
-    GNE_weights = GDP_weights
+    C = haio['C']
+    Omega_tilde = haio['Omega']
+    beta = haio['beta']
+    alpha = haio['alpha']
+    alpha_VA = haio['alpha_VA']
+    trade_elast = haio['trade_elast']
+    GNE_weights = haio['GDP_weights']
 
-    # MATLAB: alpha_VA(:,3) <-> alpha_VA(:,4) swap (medium-skill/high-skill columns)
-    alpha_VA = alpha_VA.copy()
-    alpha_VA[:, [2, 3]] = alpha_VA[:, [3, 2]]
-
-    C = len(keep_c) + 1  # kept countries + aggregate ROW
-    N = 30
-    F = N if factor_index == 2 else 4
+    N = Omega_tilde.shape[0] // C
+    F = N if factor_index == 2 else alpha_VA.shape[1]
     CN = C * N
     CF = C * F
 

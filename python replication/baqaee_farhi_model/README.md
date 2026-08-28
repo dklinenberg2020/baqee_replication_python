@@ -36,9 +36,45 @@ print(result['dlogW'])   # {'AUT': -0.0024, 'DEU': -0.0041, 'RUS': -0.0075, ...}
 ```
 
 `data_dir` defaults to this package's own directory (where the WIOD `.mat`
-files live), so this works from any working directory without extra setup
--- you only need to pass `data_dir=` explicitly if you want to point at a
-different data source (e.g. a future GTAP/OECD-ICIO-based build).
+files live), so this works from any working directory without extra setup.
+
+## Using a non-WIOD dataset: the HAIO contract
+
+`run()`/`run_scenario()` don't actually require WIOD -- `keep_c` and
+`data_dir` are just the WIOD-specific path (via `io_reorder()`) to build a
+standardized six-key "BF HAIO" (Homothetic Aggregate Input-Output) dict,
+named after the theory paper's own term for this object (Appendix D/E of
+Baqaee & Farhi's "Networks, Barriers, and Trade"). Everything downstream of
+that dict -- `main_load_data()`, `nested_ces.py`, the discretization loop in
+`run()` -- is already source-agnostic: it infers the number of sectors and
+factor categories from the arrays' own shapes rather than hardcoding WIOD's
+30 sectors / 4 factor categories.
+
+You can build and pass that dict yourself, bypassing `io_reorder()`/WIOD
+entirely, via the `haio=` keyword (pass anything, e.g. `None`, for `keep_c`
+when doing this -- it's ignored):
+
+```python
+haio = dict(
+    C=...,             # int, number of countries (incl. any aggregate "rest of world")
+    Omega=...,         # (C*N, C*N): producer i's expenditure share on good j
+    beta=...,          # (C*N, C): household c's expenditure share on good i
+    alpha=...,         # (C*N,): value-added share of producer i
+    alpha_VA=...,      # (C*N, F_data): producer i's share spent on factor f, any F_data
+    trade_elast=...,   # (N,): cross-country trade elasticity by sector
+    GDP_weights=...,   # (C,): each country's share of world GDP/GNE, sums to 1
+)
+result = bf.run_scenario(None, countries, shocks, ngrid=5, haio=haio)
+```
+
+This is the plug-in point for a GTAP or OECD-ICIO-based build: write a
+loader that turns that source's raw data into this six-key dict (its own
+sector/country classification, its own factor breakdown or none at all --
+`alpha_VA` can be a single all-ones column if the source has no factor
+split), and `run_scenario()` runs it completely unchanged. See
+`main_load_data.py`'s module docstring for the exact per-key shapes and
+semantics -- that docstring is the authoritative contract definition.
+`io_reorder.py` is simply the WIOD implementation of it.
 
 If you're working from inside this directory instead (the original usage
 pattern -- `cd baqaee_farhi_model && python run_paper_scenario.py`), nothing
@@ -49,10 +85,11 @@ package wrapper is purely additive.
 
 | Function | What it does |
 |---|---|
-| `run_scenario(keep_c, countries, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05, data_dir=None)` | The one you want. Runs the model and returns a labeled, self-describing result. |
-| `run(keep_c, shocks, ngrid=20, ...)` | Lower-level: same computation, returns a raw `(C,)` numpy array instead of a labeled dict. |
-| `main_load_data`, `io_reorder` | Data-loading layer (WIOD 2008 -> the model's standard-form inputs). You won't normally call these directly. |
-| `value_added_shares`, `response`, `solve_dlambda_F_all` | The model internals (Allen elasticities, one discretization step's equilibrium response, the linear-system solve). You won't normally call these directly either. |
+| `run_scenario(keep_c, countries, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05, data_dir=None, haio=None)` | The one you want. Runs the model and returns a labeled, self-describing result. |
+| `run(keep_c, shocks, ngrid=20, ..., haio=None)` | Lower-level: same computation, returns a raw `(C,)` numpy array instead of a labeled dict. |
+| `main_load_data(haio, initial_tariff_index, factor_index)` | Source-agnostic: turns a standardized HAIO dict into the model's standard-form inputs. Normally called for you by `run()`. |
+| `io_reorder(keep_c, data_dir)` | The WIOD-specific loader: WIOD 2008 `.mat` files -> a HAIO dict. A GTAP/OECD-ICIO loader would be a sibling to this, not a replacement for anything downstream. |
+| `value_added_shares`, `response`, `solve_dlambda_F_all` | The model internals (Allen elasticities, one discretization step's equilibrium response, the linear-system solve). You won't normally call these directly. |
 
 ### `run_scenario()`'s return value
 
