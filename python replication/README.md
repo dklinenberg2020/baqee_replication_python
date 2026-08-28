@@ -106,6 +106,13 @@ nested-CES general-equilibrium model with country-sector-specific labor,
 solved for the response to a large (iceberg-cost) shock via `ngrid`
 discretization steps.
 
+**`baqaee_farhi_model/` is also a standalone, importable package** (has its
+own `__init__.py`) with a reusable `run_scenario()` entry point for running
+arbitrary iceberg-cost shocks (not just the paper's own EU-vs-Russia case)
+and getting back labeled, self-describing results. See
+`baqaee_farhi_model/README.md` for the full API, how to import it from
+outside this directory, and how to interpret `shocks`/`intensity`.
+
 ```
 io_reorder.py           IO_reorder.m: loads and reorganizes the WIOD 2008
                          input-output table into `len(keep_c)` countries + ROW.
