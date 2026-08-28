@@ -17,22 +17,34 @@ from main_load_data import main_load_data
 from nested_ces import value_added_shares, response, solve_dlambda_F_all
 
 
-def run(keep_c, EU, RUS, ngrid=20, intensity=150, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05,
+def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05,
         data_dir='.'):
     """
     Parameters
     ----------
     keep_c : 1-indexed WIOD country numbers to track individually (ROW=35
         excluded, appended automatically as the last country).
-    EU, RUS : 1-indexed *positions within keep_c* (not WIOD country numbers)
-        of the EU countries and Russia, e.g. EU=[1,2], RUS=3 if
-        keep_c=[2,10,34,...] with Austria and Germany first and Russia
-        third. (The original MATLAB script instead indexes directly by WIOD
-        country number because it always uses the full 41-country keep_c;
-        with a general keep_c the position within keep_c is what's needed.)
+    shocks : list of dicts, each describing one iceberg-cost shock leg. All
+        country positions below are 1-indexed *positions within keep_c* (not
+        WIOD country numbers), matching keep_c itself -- e.g. sellers=[3]
+        means the 3rd entry of keep_c, not WIOD country 3. Each leg:
+            'sellers'   : positions of the seller country/countries whose
+                          exports become more costly to buy (required).
+            'buyers'    : positions of the buyer country/countries facing
+                          the higher cost, or None for all countries
+                          (default: None).
+            'sectors'   : 0-indexed WIOD sector indices (0..N-1, N=30)
+                          affected, or None for all sectors (default: None)
+                          -- e.g. a single energy sector instead of an
+                          economy-wide trade cost.
+            'intensity' : shock size in percent -- see run_scenario()'s
+                          module-level docs / README for how to interpret
+                          this number. Applied evenly across `ngrid` steps.
+        Multiple legs are summed, so independent shocks (e.g. a Gulf-wide
+        cutoff and a separate bilateral effect) can be combined in one run.
+        The paper's own EU-vs-Russia scenario is
+        `shocks=[{'sellers': [RUS], 'buyers': EU, 'sectors': None, 'intensity': 150}]`.
     ngrid : number of discretization steps for the shock.
-    intensity : shock size in the same units as the MATLAB script's
-        `intensity` (percent, roughly -- see main_dlogW_rev_bigshocks_EU_Russian_v2.m).
 
     Returns
     -------
@@ -49,18 +61,29 @@ def run(keep_c, EU, RUS, ngrid=20, intensity=150, sigma=0.9, theta=0.05, gamma=0
         Phi_F[c, c * F:(c + 1) * F] = 1
     data['Phi_F'] = Phi_F
 
-    EU = np.asarray(EU, dtype=int) - 1  # -> 0-indexed positions within keep_c
-    intensity_grid = np.log(1 + intensity / 100) / ngrid
+    # Precompute each leg's 0-indexed positions and per-step intensity once.
+    legs = []
+    for leg in shocks:
+        sellers = np.asarray(leg['sellers'], dtype=int) - 1
+        buyers = leg.get('buyers')
+        buyers = np.arange(C) if buyers is None else np.asarray(buyers, dtype=int) - 1
+        sectors = leg.get('sectors')
+        sectors = np.arange(N) if sectors is None else np.asarray(sectors, dtype=int)
+        intensity_grid = np.log(1 + leg['intensity'] / 100) / ngrid
+        legs.append((sellers, buyers, sectors, intensity_grid))
 
     dlogW = np.zeros((C, ngrid))
 
     for i in range(ngrid):
         dlogt = np.zeros((C + CN, CN + CF))
         dlogtau = np.zeros((C + CN, CN + CF))
-        r0 = (RUS - 1) * N
-        dlogtau[EU, r0:r0 + N] = intensity_grid
-        for e in EU:
-            dlogtau[C + e * N:C + (e + 1) * N, r0:r0 + N] = intensity_grid
+        for sellers, buyers, sectors, intensity_grid in legs:
+            for s in sellers:
+                cols = s * N + sectors  # this seller's shocked-sector columns
+                dlogtau[np.ix_(buyers, cols)] = intensity_grid  # buyers' households
+                for b in buyers:
+                    rows = C + b * N + np.arange(N)  # buyer b's producers, all its own sectors
+                    dlogtau[np.ix_(rows, cols)] = intensity_grid
         dX = (data['Omega_total_tilde'][:C + CN, C:] * (dlogt + dlogtau)).sum(axis=1)
         shock = dict(dlogt=dlogt, dlogtau=dlogtau, dX=dX)
 
@@ -116,14 +139,14 @@ def run(keep_c, EU, RUS, ngrid=20, intensity=150, sigma=0.9, theta=0.05, gamma=0
     return dlogW_sum, data
 
 
-def run_scenario(keep_c, countries, EU, RUS, ngrid=20, intensity=150,
+def run_scenario(keep_c, countries, shocks, ngrid=20,
                   sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05, data_dir='.'):
     """Convenience wrapper around `run()` for one-off scenario calls: runs the
     model and returns log GNE changes (dlogW, NOT percent -- multiply by 100
     yourself for a percentage) labeled by country code, the GNE-weighted
     world aggregate (same units), and the elasticity parameters that produced
     them, so a result is self-describing without needing to track down which
-    run() call it came from.
+    run() call it came from. See `run()`'s docstring for the `shocks` format.
 
     Returns
     -------
@@ -131,9 +154,9 @@ def run_scenario(keep_c, countries, EU, RUS, ngrid=20, intensity=150,
         'dlogW' : {country code -> log GNE change}, one entry per `countries`
         'World' : GNE-weighted world aggregate log GNE change
         'elasticities' : {'sigma', 'theta', 'gamma', 'epsilon'} used for this run
-        'ngrid', 'intensity' : shock discretization settings used
+        'ngrid', 'shocks' : shock discretization settings used
     """
-    dlogW_sum, data = run(keep_c, EU=EU, RUS=RUS, ngrid=ngrid, intensity=intensity,
+    dlogW_sum, data = run(keep_c, shocks, ngrid=ngrid,
                            sigma=sigma, theta=theta, gamma=gamma, epsilon=epsilon,
                            data_dir=data_dir)
     GNE_weights = data['chi_std'][:data['C']]
@@ -143,5 +166,5 @@ def run_scenario(keep_c, countries, EU, RUS, ngrid=20, intensity=150,
         World=world,
         elasticities=dict(sigma=sigma, theta=theta, gamma=gamma, epsilon=epsilon),
         ngrid=ngrid,
-        intensity=intensity,
+        shocks=shocks,
     )

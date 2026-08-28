@@ -45,9 +45,10 @@ def main():
     parser.add_argument('--intensity', type=float, default=150)
     args = parser.parse_args()
 
+    shocks = [{'sellers': [RUS], 'buyers': EU, 'sectors': None, 'intensity': args.intensity}]
+
     t0 = time.time()
-    result = run_scenario(KEEP_C, COUNTRIES, EU=EU, RUS=RUS, ngrid=args.ngrid, intensity=args.intensity,
-                           data_dir='.')
+    result = run_scenario(KEEP_C, COUNTRIES, shocks, ngrid=args.ngrid, data_dir='.')
     elapsed = time.time() - t0
 
     print(f'\nSolved in {elapsed:.1f}s ({args.ngrid} discretization steps)\n')
