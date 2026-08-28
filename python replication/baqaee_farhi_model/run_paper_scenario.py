@@ -23,7 +23,7 @@ avoids that memory cost.
 """
 import argparse
 import time
-from run_model import run
+from run_model import run_scenario
 
 # WIOD 2008 country order used throughout the replication package (see
 # main_dlogW_rev_bigshocks_EU_Russian_v2.m); ROW is appended as the 42nd.
@@ -46,17 +46,16 @@ def main():
     args = parser.parse_args()
 
     t0 = time.time()
-    dlogW_sum, data = run(KEEP_C, EU=EU, RUS=RUS, ngrid=args.ngrid, intensity=args.intensity, data_dir='.')
+    result = run_scenario(KEEP_C, COUNTRIES, EU=EU, RUS=RUS, ngrid=args.ngrid, intensity=args.intensity,
+                           data_dir='.')
     elapsed = time.time() - t0
 
-    GNE_weights = data['chi_std'][:data['C']]
-    world = GNE_weights @ dlogW_sum
-
     print(f'\nSolved in {elapsed:.1f}s ({args.ngrid} discretization steps)\n')
+    print(f'Elasticities used: {result["elasticities"]}\n')
     print(f'{"Country":8s} {"dlogW (%)":>10s}')
-    for name, w in zip(COUNTRIES, dlogW_sum):
+    for name, w in result['dlogW'].items():
         print(f'{name:8s} {100 * w:10.3f}')
-    print(f'{"World":8s} {100 * world:10.3f}')
+    print(f'{"World":8s} {100 * result["World"]:10.3f}')
 
 
 if __name__ == '__main__':

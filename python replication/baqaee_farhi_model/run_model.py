@@ -114,3 +114,34 @@ def run(keep_c, EU, RUS, ngrid=20, intensity=150, sigma=0.9, theta=0.05, gamma=0
 
     dlogW_sum = dlogW.sum(axis=1)
     return dlogW_sum, data
+
+
+def run_scenario(keep_c, countries, EU, RUS, ngrid=20, intensity=150,
+                  sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05, data_dir='.'):
+    """Convenience wrapper around `run()` for one-off scenario calls: runs the
+    model and returns log GNE changes (dlogW, NOT percent -- multiply by 100
+    yourself for a percentage) labeled by country code, the GNE-weighted
+    world aggregate (same units), and the elasticity parameters that produced
+    them, so a result is self-describing without needing to track down which
+    run() call it came from.
+
+    Returns
+    -------
+    dict with:
+        'dlogW' : {country code -> log GNE change}, one entry per `countries`
+        'World' : GNE-weighted world aggregate log GNE change
+        'elasticities' : {'sigma', 'theta', 'gamma', 'epsilon'} used for this run
+        'ngrid', 'intensity' : shock discretization settings used
+    """
+    dlogW_sum, data = run(keep_c, EU=EU, RUS=RUS, ngrid=ngrid, intensity=intensity,
+                           sigma=sigma, theta=theta, gamma=gamma, epsilon=epsilon,
+                           data_dir=data_dir)
+    GNE_weights = data['chi_std'][:data['C']]
+    world = GNE_weights @ dlogW_sum
+    return dict(
+        dlogW=dict(zip(countries, dlogW_sum)),
+        World=world,
+        elasticities=dict(sigma=sigma, theta=theta, gamma=gamma, epsilon=epsilon),
+        ngrid=ngrid,
+        intensity=intensity,
+    )
