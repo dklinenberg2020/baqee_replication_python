@@ -16,6 +16,29 @@ E). It is not a re-implementation from the paper's description; every
 closed-form step traces back to either the original code's own output or
 the theory paper's own derivation.
 
+## The pipeline
+
+Two loaders converge on the same standardized "HAIO" contract; everything
+to the right of `main_load_data.py` doesn't know or care which loader fed
+it (see "Using a non-WIOD dataset" below):
+
+```
+                       io_reorder.py   ---\
+DATA (.mat / .csv)                          --->  main_load_data.py  --->  nested_ces.py  --->  run_model.py  --->  run_paper_scenario.py
+                       icio_to_haio.py ---/
+                       (or your own loader)
+```
+
+| File | Role |
+|---|---|
+| `io_reorder.py` | WIOD `.mat` files -> HAIO dict |
+| `icio_to_haio.py` | OECD ICIO CSV -> HAIO dict |
+| `main_load_data.py` | HAIO dict -> the model's standard-form inputs (source-agnostic) |
+| `nested_ces.py` | the model itself: Allen elasticities, one discretization step's equilibrium response, the linear-system solve |
+| `run_model.py` | the outer discretization loop (`run()`) and the labeled convenience wrapper (`run_scenario()`) |
+| `run_paper_scenario.py` | a ready-to-run driver with the paper's exact settings (all 41 WIOD countries, EU-vs-Russia) |
+| `__init__.py` | makes this directory importable as a package from anywhere (see below) |
+
 ## Installing / importing this as a standalone package
 
 There's no `pip install` step -- just put the parent directory on
@@ -252,9 +275,14 @@ final numbers.
 
 ## Data included
 
-Three WIOD 2013-release, benchmark-year-2008 files (see the top-level
-`python replication/README.md` for the full data provenance and the other
-three `.mat` files present but unused by this code path):
+Three WIOD 2013-release, benchmark-year-2008 files -- everything `io_reorder.py`
+actually reads (see the top-level `python replication/README.md` for the
+full data provenance). The original MATLAB replication package
+(`../../replication/baqaee_farhi_model/`) ships three additional `.mat`
+files (`WIOD_SEA_14.mat`, `ahs_all.mat`, `wiot2008_row_apr12.mat`) used only
+by `IO_reorder_init_tariff.m`, the "with initial tariffs" variant that was
+never ported (the paper's own driver script doesn't use it either) -- those
+are intentionally not duplicated here.
 
 | File | Contents |
 |---|---|
