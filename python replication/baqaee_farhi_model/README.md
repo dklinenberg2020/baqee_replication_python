@@ -108,34 +108,90 @@ for final-consumption shares, value-added share = VA / (VA + intermediate
 cost)), just against ICIO's row/column bookkeeping instead of WIOD's packed
 binary blocks.
 
-**The expected input format is now checked against OECD's own published
+**The expected input format was checked against OECD's own published
 documentation** (their "ReadMe_icio_csv" file and 2025-edition country/sector
-notes, both retrieved from `stats.oecd.org`), not just a guess -- this
-corrected two assumptions the first version of this loader made:
-value added is **one shared row** for the whole table (not one row per
-country), and final demand is **6 named categories per country**
-(`HFCE, NPISH, GGFC, GFCF, INVNT, P33`), which the loader now sums itself
-rather than asking the caller to pre-sum. It also surfaced a correction to
-something said earlier in this project: crude oil/gas *extraction*
-(`B06`) is its own ICIO sector, separate from `D` (electricity/gas/steam
-*supply*) -- `B06` is the right target for a Hormuz/crude-specific shock.
+notes, both retrieved from `stats.oecd.org`) and then confirmed against a
+**real downloaded 2022 ICIO file** (the "SML" per-year release, 81 countries
+x 50 sectors) -- both steps corrected assumptions the first version of this
+loader made: value added is **one shared row** for the whole table (not one
+row per country), final demand is **6 named categories per country**
+(`HFCE, NPISH, GGFC, GFCF, INVNT, DPABR` -- the real file uses `DPABR`, not
+`P33` as OECD's older documentation suggested), which the loader sums
+itself, and crude oil/gas *extraction* (`B06`) is its own ICIO sector,
+separate from `D` (electricity/gas/steam *supply*) -- `B06` is the right
+target for a Hormuz/crude-specific shock.
 
-**Still not run against a real downloaded OECD ICIO release.** The actual
-data file (`2017-2022_EXT.zip`, ~136MB, linked from OECD's ICIO page) sits
-behind a Cloudflare bot challenge on `www.oecd.org` that no plain HTTP
-client can pass -- unlike the documentation PDFs, which OECD happens to also
-serve unprotected from `stats.oecd.org`. Getting a real file into this
-loader needs a manual browser download; once you have it:
+**Real-data run, end to end**: Saudi Arabia + UAE (sellers) facing a 150%
+iceberg cost on `B06` exports to the US, with a made-up placeholder
+`trade_elast` (real Fontagne-Guimbard-Orefice values still needed -- see
+below), tracking `SAU`, `ARE`, `USA` and a `ROW` composite for every other
+country:
 
 ```python
 import pandas as pd
 from icio_to_haio import icio_to_haio
+from run_model import run_scenario
 
-df = pd.read_csv('2020.csv', index_col=0)   # one file per year in the OECD zip
-haio = icio_to_haio(df, countries=['USA', 'SAU', 'IRQ', ...], sectors=['B06', ...],
-                     trade_elast=[...])
-result = run_scenario(None, countries, shocks, haio=haio)
+df = pd.read_csv('2022_SML.csv', index_col=0)   # not committed -- see "Getting the real data" below
+countries = ['SAU', 'ARE', 'USA', 'ROW']
+sectors = [s for s in ALL_SECTORS if s not in ('T', 'B05')]  # see "two real data quirks" below
+haio = icio_to_haio(df, countries, sectors, trade_elast, row_label='ROW')
+result = run_scenario(None, countries, [{'sellers': [1, 2], 'buyers': [3],
+                                          'sectors': [sectors.index('B06')], 'intensity': 150}],
+                      ngrid=5, haio=haio)
+# {'SAU': -0.18%, 'ARE': +0.19%, 'USA': -0.008%, 'ROW': -0.001%, 'World': -0.003%} (log GNE)
 ```
+
+Real, sensible general-equilibrium output: Saudi Arabia (the more
+US-dependent of the two sellers) loses; the US barely notices (two sellers,
+one sector, out of its whole economy); UAE's small *gain* is a genuine
+substitution effect worth digging into further, not a bug.
+
+**Country coverage caveat found along the way**: ICIO does **not** track
+Iran, Iraq, or Kuwait individually -- only Saudi Arabia and the UAE get
+their own rows among Gulf states; everything else Gulf-related is inside
+`ROW`. A serious Hormuz scenario naming Iran specifically (as in the
+back-of-envelope work earlier in this project) can't isolate Iran's own
+export collapse with ICIO alone.
+
+**Two real data quirks the small test above had to route around** (both
+inherent to the data, not bugs, and much less likely to bite at full scale
+with all 81 countries tracked):
+1. Sector `T` ("activities of households as employers... for own use") is
+   *always* 100% value-added with zero measured intermediate cost, by
+   national-accounts convention, for every country -- this divides by zero
+   in `nested_ces.py`'s AES formulas (`epsilon/(1-alpha)` with `alpha=1`)
+   regardless of data source. Exclude it if you don't need it.
+2. **A country can have literally zero recorded activity in a niche
+   sector** (Saudi Arabia has no coal mining, `B05`) -- ICIO's 50-sector
+   classification is finer than WIOD's 30, so this shows up more than it
+   would have with WIOD. A producer with zero output makes its equation in
+   the linear solve degenerate (`LinAlgError: Singular matrix`). This is
+   rare to nonexistent once every excluded country is aggregated into
+   `ROW` (summing 77 countries into one composite makes an all-zero sector
+   implausible), but can bite in a small, hand-picked `countries` subset
+   like the test above.
+
+**`row_label`, added after finding a real numerical failure mode**: the
+first version of this loader simply *dropped* any country not in
+`countries`. Testing against the real file with only 4 countries kept
+immediately produced silently-wrong `alpha` values (falsely inflated toward
+1.0, since a producer's real intermediate purchases from an excluded
+country vanished instead of being counted) and, in the worst case, an exact
+`alpha=1.0` division-by-zero. Passing `row_label='ROW'` now folds every
+excluded country into that composite (summing, not dropping) before
+building the HAIO dict -- see `_fold_excluded_into_row()`'s docstring.
+Always pass this unless your `countries` list already covers every country
+in the file.
+
+**Getting the real data into your own copy**: the actual ICIO zip
+(`2017-2022_EXT.zip` or similar, ~136MB, linked from OECD's ICIO page) sits
+behind a Cloudflare bot challenge on `www.oecd.org` that no plain HTTP
+client can pass -- unlike the documentation PDFs, which OECD happens to also
+serve unprotected from `stats.oecd.org`. Download it manually in a browser,
+unzip to get one CSV per year, and drop the year(s) you want into this
+directory -- `.gitignore`d (`baqaee_farhi_model/*.csv`) since a single
+year's file is far too large for a normal GitHub push.
 
 Running `python icio_to_haio.py` prints a small **synthetic** (not real
 data) 2-country x 2-sector example showing exactly what "the standard data
@@ -200,7 +256,7 @@ package wrapper is purely additive.
 | `run(keep_c, shocks, ngrid=20, ..., haio=None)` | Lower-level: same computation, returns a raw `(C,)` numpy array instead of a labeled dict. |
 | `main_load_data(haio, initial_tariff_index, factor_index)` | Source-agnostic: turns a standardized HAIO dict into the model's standard-form inputs. Normally called for you by `run()`. |
 | `io_reorder(keep_c, data_dir)` | The WIOD-specific loader: WIOD 2008 `.mat` files -> a HAIO dict. |
-| `icio_to_haio(df, countries, sectors, trade_elast, ...)` | A first OECD-ICIO loader: a plain-CSV-shaped DataFrame -> a HAIO dict. Not yet run against a real ICIO download -- see below. |
+| `icio_to_haio(df, countries, sectors, trade_elast, row_label=None, ...)` | An OECD-ICIO loader, verified against a real downloaded file: a plain-CSV-shaped DataFrame -> a HAIO dict. Pass `row_label` (e.g. `'ROW'`) to fold excluded countries in rather than dropping them -- see below. |
 | `value_added_shares`, `response`, `solve_dlambda_F_all` | The model internals (Allen elasticities, one discretization step's equilibrium response, the linear-system solve). You won't normally call these directly. |
 
 ### `run_scenario()`'s return value

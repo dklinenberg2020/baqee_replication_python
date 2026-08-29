@@ -21,7 +21,7 @@ a CSV in this shape):
     NOT one row per country. Its columns are the same country-sector
     labels as the intermediate block.
   - Final demand is 6 named categories per country in the real OECD file:
-    HFCE, NPISH, GGFC, GFCF, INVNT, P33 (household consumption, non-profit
+    HFCE, NPISH, GGFC, GFCF, INVNT, DPABR (household consumption, non-profit
     institutions, government consumption, gross fixed capital formation,
     inventory change, direct purchases abroad). This loader sums those 6
     into one total per country itself (`fd_categories` below) -- you do
@@ -52,21 +52,58 @@ Two known ICIO-specific gaps, both documented in baqaee_farhi_model/README.md:
 import numpy as np
 import pandas as pd
 
-FD_CATEGORIES = ('HFCE', 'NPISH', 'GGFC', 'GFCF', 'INVNT', 'P33')
+FD_CATEGORIES = ('HFCE', 'NPISH', 'GGFC', 'GFCF', 'INVNT', 'DPABR')
+
+
+def _fold_excluded_into_row(df, countries, row_label, va_label):
+    """Aggregate every country present in `df` but NOT in `countries` (and
+    not `row_label` itself) into `row_label`'s own rows/columns, by summing
+    -- so excluded countries' flows are preserved (as a composite), not
+    silently dropped. Mirrors io_reorder.py's WIOD "rest of world" handling.
+    Without this, a producer whose real intermediate inputs come mostly
+    from an excluded country would show near-zero intermediate cost in the
+    reduced view, artificially inflating its value-added share (in the
+    worst case to exactly 1.0, which divides by zero in nested_ces.py's
+    AES formulas -- this is not a hypothetical, it's what happens on the
+    real ICIO file with a small `countries` subset and no row_label)."""
+    all_countries = sorted(set(lbl.split('_', 1)[0] for lbl in df.index
+                                if lbl not in (va_label, 'TLS', 'OUT')))
+    excluded = set(all_countries) - set(countries) - {row_label}
+    if not excluded:
+        return df
+
+    def remap(label):
+        if label in (va_label, 'TLS', 'OUT'):
+            return label
+        c, _, rest = label.partition('_')
+        return f'{row_label}_{rest}' if c in excluded else label
+
+    df = df.rename(index={lbl: remap(lbl) for lbl in df.index},
+                    columns={lbl: remap(lbl) for lbl in df.columns})
+    df = df.groupby(df.index).sum()
+    df = df.T.groupby(df.T.index).sum().T
+    return df
 
 
 def icio_to_haio(df, countries, sectors, trade_elast, alpha_VA=None,
-                  va_label='VA', fd_categories=FD_CATEGORIES):
+                  va_label='VA', fd_categories=FD_CATEGORIES, row_label=None):
     """
     Parameters
     ----------
     df : pandas.DataFrame, the raw ICIO matrix (see module docstring).
     countries : list of country codes to track individually. Any country
-        NOT in this list is simply excluded, not automatically folded into
-        a "rest of world" composite -- build that composite yourself
-        (sum the excluded countries' rows/columns into one synthetic extra
-        country's row/column in `df`) before calling this function if you
-        want one, matching io_reorder.py's own ROW handling.
+        NOT in this list, and not equal to `row_label`, is folded into
+        `row_label`'s own composite (summed in, not dropped) if `row_label`
+        is given; otherwise it is simply excluded -- see
+        `_fold_excluded_into_row()`'s docstring for why that silent
+        exclusion is dangerous with a small `countries` subset. Include
+        `row_label` itself in `countries` if you want it tracked as one of
+        the model's countries (matching io_reorder.py's WIOD ROW, which is
+        always tracked).
+    row_label : optional country code (e.g. 'ROW') to fold every excluded
+        country into. Omit for the old behavior (excluded countries
+        silently dropped, not recommended except when `countries` already
+        covers every country in `df`).
     sectors : list of sector codes, in the order they should appear (fixes
         N = len(sectors) and each producer's position within its country's
         block) -- e.g. OECD's own codes like 'B06' (crude petroleum and
@@ -84,6 +121,9 @@ def icio_to_haio(df, countries, sectors, trade_elast, alpha_VA=None,
     dict, the standardized HAIO contract -- pass straight to
     run()/run_scenario() via `haio=`.
     """
+    if row_label is not None:
+        df = _fold_excluded_into_row(df, countries, row_label, va_label)
+
     C, N = len(countries), len(sectors)
     cs_labels = [f'{c}_{s}' for c in countries for s in sectors]  # (CN,) fixed row/col order
     fd_labels = {c: [f'{c}_{cat}' for cat in fd_categories] for c in countries}
