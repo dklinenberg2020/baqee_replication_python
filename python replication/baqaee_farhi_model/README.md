@@ -76,6 +76,67 @@ split), and `run_scenario()` runs it completely unchanged. See
 semantics -- that docstring is the authoritative contract definition.
 `io_reorder.py` is simply the WIOD implementation of it.
 
+### `icio_to_haio.py`: a first OECD ICIO loader, with a toy worked example
+
+`icio_to_haio.py` implements this contract for OECD ICIO's plain-CSV layout
+-- same normalization arithmetic as `io_reorder.py` (transpose to a buyer x
+seller matrix, row-normalize for intermediate-input shares, column-normalize
+for final-consumption shares, value-added share = VA / (VA + intermediate
+cost)), just against ICIO's row/column bookkeeping instead of WIOD's packed
+binary blocks. **This has not yet been run against a real downloaded OECD
+ICIO release** -- see the module docstring for exactly what's still unverified
+(ICIO's actual current column names, the "sum the final-demand columns
+yourself" simplification, the Russia-imputation caveat from the top-level
+README) versus what's already confirmed to work (the parsing/normalization
+logic itself, end to end through `run_scenario()`).
+
+Running `python icio_to_haio.py` prints a small **synthetic** (not real
+data) 2-country x 2-sector example showing exactly what "the standard data
+should look like after cleaning" means in practice. The toy input --
+country-sector labels on both axes, one value-added row and one final-demand
+column per country:
+
+```
+      A_S1  A_S2  B_S1  B_S2  A_FD  B_FD
+A_S1     5     3     2     1    10     4
+A_S2     2     6     1     2     8     3
+B_S1     1     2     4     3     3    12
+B_S2     1     1     2     5     2     9
+A_VA     9     7     0     0     0     0
+B_VA     0     0     8     6     0     0
+```
+
+produces this standardized HAIO dict:
+
+```
+Omega (4x4, row-normalized intermediate-input shares):
+[[0.556 0.222 0.111 0.111]
+ [0.25  0.5   0.167 0.083]
+ [0.222 0.111 0.444 0.222]
+ [0.091 0.182 0.273 0.455]]
+
+beta (4x2, column-normalized final-consumption shares):
+[[0.435 0.143]
+ [0.348 0.107]
+ [0.13  0.429]
+ [0.087 0.321]]
+
+alpha (value-added share of gross output, per producer):
+[0.5   0.368 0.471 0.353]
+
+alpha_VA (no factor-split source -> single all-ones column):
+[[1.] [1.] [1.] [1.]]
+
+GDP_weights (each country's share of total final demand):
+[0.451 0.549]
+```
+
+which then runs cleanly through `run_scenario(None, ['A', 'B'], shocks,
+haio=haio)` and returns real (if economically meaningless, since the input
+numbers are made up) `dlogW` output -- confirming the contract and the
+loader logic both work, independent of whether ICIO's real file matches the
+simplified two-suffix column-naming assumption above.
+
 If you're working from inside this directory instead (the original usage
 pattern -- `cd baqaee_farhi_model && python run_paper_scenario.py`), nothing
 changes: every module still works as a plain script exactly as before. The
@@ -88,7 +149,8 @@ package wrapper is purely additive.
 | `run_scenario(keep_c, countries, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05, data_dir=None, haio=None)` | The one you want. Runs the model and returns a labeled, self-describing result. |
 | `run(keep_c, shocks, ngrid=20, ..., haio=None)` | Lower-level: same computation, returns a raw `(C,)` numpy array instead of a labeled dict. |
 | `main_load_data(haio, initial_tariff_index, factor_index)` | Source-agnostic: turns a standardized HAIO dict into the model's standard-form inputs. Normally called for you by `run()`. |
-| `io_reorder(keep_c, data_dir)` | The WIOD-specific loader: WIOD 2008 `.mat` files -> a HAIO dict. A GTAP/OECD-ICIO loader would be a sibling to this, not a replacement for anything downstream. |
+| `io_reorder(keep_c, data_dir)` | The WIOD-specific loader: WIOD 2008 `.mat` files -> a HAIO dict. |
+| `icio_to_haio(df, countries, sectors, trade_elast, ...)` | A first OECD-ICIO loader: a plain-CSV-shaped DataFrame -> a HAIO dict. Not yet run against a real ICIO download -- see below. |
 | `value_added_shares`, `response`, `solve_dlambda_F_all` | The model internals (Allen elasticities, one discretization step's equilibrium response, the linear-system solve). You won't normally call these directly. |
 
 ### `run_scenario()`'s return value

@@ -27,6 +27,7 @@ if _PKG_DIR not in sys.path:
 import run_model as _run_model
 import main_load_data as _main_load_data
 import io_reorder as _io_reorder
+import icio_to_haio as _icio_to_haio
 import nested_ces as _nested_ces
 
 
@@ -50,11 +51,12 @@ def run_scenario(keep_c, countries, shocks, ngrid=20, sigma=0.9, theta=0.05, gam
 
 main_load_data = _main_load_data.main_load_data
 io_reorder = _io_reorder.io_reorder
+icio_to_haio = _icio_to_haio.icio_to_haio
 value_added_shares = _nested_ces.value_added_shares
 response = _nested_ces.response
 solve_dlambda_F_all = _nested_ces.solve_dlambda_F_all
 
 __all__ = [
-    'run', 'run_scenario', 'main_load_data', 'io_reorder',
+    'run', 'run_scenario', 'main_load_data', 'io_reorder', 'icio_to_haio',
     'value_added_shares', 'response', 'solve_dlambda_F_all',
 ]
