@@ -146,6 +146,38 @@ def load_fontagne_trade_elast(sectors, csv_path='fontagne_icio_trade_elast.csv')
     return -df.loc[sectors, 'epsilon_icio'].to_numpy(dtype=float)
 
 
+def load_combined_trade_elast(sectors, csv_path='combined_trade_elast.csv', include_approximate=True):
+    """Load trade_elast from combined_trade_elast.csv (built by
+    build_combined_trade_elast.py) -- goods sectors from Fontagne-Guimbard-Orefice
+    plus services sectors from Ahmad & Schreiber (2024)'s GTAP-level
+    estimates, each already converted to nested_ces.py's convention, with
+    provenance tracked in that file's `source`/`mapping_quality`/`note`
+    columns (see build_combined_trade_elast.py's module docstring for the
+    exact GTAP->ICIO mapping judgment calls this made). Covers 44 of
+    ICIO's 49 non-'T' sectors -- still missing: A02, B05, B09, D, O (no
+    estimate from either source).
+
+    include_approximate : if False, raise for any sector whose
+        mapping_quality is 'approximate' (the many-to-one GTAP mappings --
+        K, J61, J62_63, N, R, S) instead of silently including it, for
+        callers who want only the more directly-matched estimates.
+
+    Raises KeyError for any requested sector missing from the CSV
+    entirely -- same reasoning as load_fontagne_trade_elast(): a caller
+    decision (exclude the sector, or substitute something else), not a
+    silent default.
+    """
+    df = pd.read_csv(csv_path, index_col='icio_sector')
+    missing = [s for s in sectors if s not in df.index]
+    if missing:
+        raise KeyError(f'sectors not in {csv_path} (no trade elasticity from either source): {missing}')
+    if not include_approximate:
+        approx = [s for s in sectors if df.loc[s, 'mapping_quality'] == 'approximate']
+        if approx:
+            raise KeyError(f'sectors only have an approximate (many-to-one GTAP) mapping: {approx}')
+    return df.loc[sectors, 'trade_elast'].to_numpy(dtype=float)
+
+
 def icio_to_haio(df, countries, sectors, trade_elast, alpha_VA=None,
                   va_label='VA', fd_categories=FD_CATEGORIES, row_label=None):
     """

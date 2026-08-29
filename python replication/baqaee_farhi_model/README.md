@@ -218,15 +218,60 @@ Always pass this unless your `countries` list already covers every country
 in the file.
 
 **Getting `trade_elast`**: ICIO has none of its own (see "Two known
-ICIO-specific gaps" above) -- **already done**, see
-`fontagne_icio_trade_elast.csv` and `load_fontagne_trade_elast()` above.
-Source: Fontagne, Guimbard and Orefice's product-level trade elasticities
-(https://sites.google.com/view/product-level-trade-elasticity),
-specifically the **"New ICIO classification" (March 2026 update)** -- this
-was the right call to make in advance: its sector codes (`B06`, `C24A`,
-`C24B`, `C301`/`C302T309`, ...) match the real `2022_SML.csv` file exactly,
-which the "Old" classification (predating OECD's 2025 ICIO sector splits)
-would not have.
+ICIO-specific gaps" above). Two layers exist here:
+
+1. `fontagne_icio_trade_elast.csv` / `load_fontagne_trade_elast()` -- the
+   raw Fontagne, Guimbard and Orefice download (product-level trade
+   elasticities, https://sites.google.com/view/product-level-trade-elasticity,
+   "New ICIO classification" -- confirmed to match `2022_SML.csv`'s sector
+   codes exactly). Covers 28 of 49 non-`T` sectors -- **goods only**;
+   tariff-based identification doesn't work for services, which have no
+   tariffs to vary.
+2. **`combined_trade_elast.csv` / `load_combined_trade_elast()`** -- fills
+   most of that services gap by adding Ahmad and Schreiber (2024, USITC
+   Working Paper), "Estimating Elasticities for Tradable Services in Policy
+   Simulations," which estimates services elasticities directly (a
+   markup/monopolistic-competition identification, since there's no tariff
+   variation to exploit) at the GTAP sector level. Covers **44 of 49**
+   sectors -- every row carries a `source` column
+   (`fontagne_guimbard_orefice_2022` or `ahmad_schreiber_2024`) and a
+   `mapping_quality` column (`direct` or `approximate`), so you always know
+   which number came from where and how confidently. Still missing after
+   both sources: `A02` (forestry), `B05` (coal mining), `B09` (mining
+   support), `D` (electricity/gas supply), `O` (public administration --
+   arguably correctly omitted, since government isn't really "traded").
+
+**The two sources report fundamentally different objects and need
+different sign/offset transforms** -- getting this wrong is the easiest way
+to silently corrupt every number downstream:
+   - Fontagne's `epsilon_icio` is a *negative* trade-cost elasticity
+     (`epsilon = -(sigma-1)` is the standard convention), so
+     `trade_elast = sigma - 1 = -epsilon_icio`.
+   - Ahmad & Schreiber's EOS is *already* a directly-estimated elasticity of
+     substitution (`sigma` itself, positive), so `trade_elast = EOS - 1`.
+
+**GTAP -> ICIO mapping judgment calls** (all made explicitly in
+`build_combined_trade_elast.py`, not silently): most GTAP services sectors
+match an ICIO code 1:1 (`cns`->`F`, `trd`->`G`, `edu`->`P`, `hht`->`Q`,
+`rsa`->`L`, etc. -- marked `direct`). A few don't split as cleanly, marked
+`approximate`: GTAP's one broad `cmn` (ICT) sector is duplicated across
+ICIO's `J61` and `J62_63` (but *not* `J58T60`, which Fontagne already
+covers directly); ICIO's single `K` (financial+insurance) averages GTAP's
+separate `ins` and `ofi`; `N` uses GTAP's `obs` (its NAICS 561
+admin/support component is the closer match, while `M` is left to
+Fontagne's own direct estimate since NAICS 541 professional services maps
+better there); GTAP's `ros` is duplicated across ICIO's `R` and `S` (a
+weaker match for `S` specifically). See
+`build_combined_trade_elast.py`'s module docstring for the full reasoning
+behind each call -- re-run that script if either upstream source is
+revised.
+
+**Result with broader coverage**: rerunning the Saudi Arabia + UAE
+scenario with all 44 covered sectors (instead of Fontagne's 28 goods-only
+sectors) changes the numbers meaningfully -- `SAU -0.19%`, `ARE +0.12%`,
+`USA -0.006%` log GNE (vs. `-0.43%`/`+0.14%`/`-0.015%` with goods-only
+coverage) -- a concrete demonstration that sector coverage isn't a detail,
+it changes the answer.
 
 **Getting the real data into your own copy**: the actual ICIO zip
 (`2017-2022_EXT.zip` or similar, ~136MB, linked from OECD's ICIO page) sits
@@ -301,7 +346,8 @@ package wrapper is purely additive.
 | `main_load_data(haio, initial_tariff_index, factor_index)` | Source-agnostic: turns a standardized HAIO dict into the model's standard-form inputs. Normally called for you by `run()`. |
 | `io_reorder(keep_c, data_dir)` | The WIOD-specific loader: WIOD 2008 `.mat` files -> a HAIO dict. |
 | `icio_to_haio(df, countries, sectors, trade_elast, row_label=None, ...)` | An OECD-ICIO loader, verified against a real downloaded file: a plain-CSV-shaped DataFrame -> a HAIO dict. Pass `row_label` (e.g. `'ROW'`) to fold excluded countries in rather than dropping them -- see below. |
-| `load_fontagne_trade_elast(sectors, csv_path=...)` | Loads real Fontagne-Guimbard-Orefice trade elasticities for ICIO, converted to `nested_ces.py`'s convention -- see its sign-convention caveat below. |
+| `load_fontagne_trade_elast(sectors, csv_path=...)` | Loads real Fontagne-Guimbard-Orefice trade elasticities for ICIO (goods, 28 sectors), converted to `nested_ces.py`'s convention -- see its sign-convention caveat below. |
+| `load_combined_trade_elast(sectors, csv_path=..., include_approximate=True)` | Loads Fontagne + Ahmad-Schreiber (2024) combined (goods + services, 44 sectors), with `source`/`mapping_quality` tracked per sector -- see below. |
 | `value_added_shares`, `response`, `solve_dlambda_F_all` | The model internals (Allen elasticities, one discretization step's equilibrium response, the linear-system solve). You won't normally call these directly. |
 
 ### `run_scenario()`'s return value
