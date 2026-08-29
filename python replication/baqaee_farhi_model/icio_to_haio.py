@@ -34,10 +34,18 @@ challenge that a plain HTTP client cannot pass -- unlike the documentation
 PDFs/README above, which OECD happens to also serve unprotected from
 stats.oecd.org. Getting a real file into this loader therefore needs either
 a manual browser download (see baqaee_farhi_model/README.md for exactly
-what to do with it once downloaded) or a different access path; the
-parsing/normalization logic here is now matched to OECD's own documented
-structure (verified, not guessed) but has only been exercised end-to-end on
-the synthetic toy table in this file's __main__ block.
+what to do with it once downloaded) or a different access path; once
+obtained, the parsing/normalization logic here has been run end-to-end
+against a real 2022 file (81 countries x 50 sectors, the "SML" per-year
+release) -- see baqaee_farhi_model/README.md for the real scenario result
+and the data quirks that run surfaced.
+
+ALWAYS EXCLUDE SECTOR 'T' when using real ICIO data with this model --
+"activities of households as employers... for own use" is, by
+national-accounts convention, 100% value-added with zero measured
+intermediate cost for every country, which divides by zero in
+nested_ces.py's AES formulas. It's a negligible share of GNE everywhere and
+irrelevant to anything this project models, so excluding it costs nothing.
 
 Two known ICIO-specific gaps, both documented in baqaee_farhi_model/README.md:
     - No labor/skill factor breakdown (unlike WIOD SEA's 4 categories) --
@@ -45,9 +53,12 @@ Two known ICIO-specific gaps, both documented in baqaee_farhi_model/README.md:
       heterogeneity), matching main_load_data.py's ability to infer any
       factor-category count from alpha_VA's own shape. Pass your own
       alpha_VA if you have a supplementary factor-split source.
-    - No trade elasticities of its own -- must be supplied externally
-      (e.g. Fontagne-Guimbard-Orefice, already pre-aggregated to ICIO's
-      sector classification).
+    - No trade elasticities of its own -- must be supplied externally.
+      Use Fontagne-Guimbard-Orefice's "New ICIO classification" (March 2026
+      update, https://sites.google.com/view/product-level-trade-elasticity)
+      -- not the "Old" one, which predates the sector splits (C24A/C24B,
+      C301/C302T309) OECD's 2025 ICIO edition introduced and won't have
+      matching codes.
 """
 import numpy as np
 import pandas as pd

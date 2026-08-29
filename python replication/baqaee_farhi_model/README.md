@@ -157,11 +157,15 @@ export collapse with ICIO alone.
 **Two real data quirks the small test above had to route around** (both
 inherent to the data, not bugs, and much less likely to bite at full scale
 with all 81 countries tracked):
-1. Sector `T` ("activities of households as employers... for own use") is
-   *always* 100% value-added with zero measured intermediate cost, by
-   national-accounts convention, for every country -- this divides by zero
-   in `nested_ces.py`'s AES formulas (`epsilon/(1-alpha)` with `alpha=1`)
-   regardless of data source. Exclude it if you don't need it.
+1. **Always exclude sector `T`** ("activities of households as employers...
+   for own use") when using ICIO with this model. It is *always* 100%
+   value-added with zero measured intermediate cost, by national-accounts
+   convention, for every country -- not a data gap, just how this category
+   is defined -- and that divides by zero in `nested_ces.py`'s AES formulas
+   (`epsilon/(1-alpha)` with `alpha=1`) regardless of data source. It's a
+   negligible share of GNE everywhere and irrelevant to anything this
+   project models (trade, energy, tariffs), so there's no real cost to
+   dropping it: `sectors = [s for s in ALL_ICIO_SECTORS if s != 'T']`.
 2. **A country can have literally zero recorded activity in a niche
    sector** (Saudi Arabia has no coal mining, `B05`) -- ICIO's 50-sector
    classification is finer than WIOD's 30, so this shows up more than it
@@ -183,6 +187,20 @@ excluded country into that composite (summing, not dropping) before
 building the HAIO dict -- see `_fold_excluded_into_row()`'s docstring.
 Always pass this unless your `countries` list already covers every country
 in the file.
+
+**Getting `trade_elast`**: ICIO has none of its own (see "Two known
+ICIO-specific gaps" above) -- use Fontagne, Guimbard and Orefice's
+product-level trade elasticities
+(https://sites.google.com/view/product-level-trade-elasticity), which
+publishes a version pre-aggregated specifically to ICIO's own sector
+codes. Use the **"New ICIO classification" (March 2026 update)**, not the
+"Old" one -- OECD's 2025 ICIO edition introduced sector splits
+(`C24A`/`C24B`, `C301`/`C302T309`) that only the new classification
+reflects; the old one predates them and its codes won't line up with
+`2022_SML.csv`'s. Sanity-check this once downloaded: its sector-code column
+should contain exactly the strings this file uses (`B06`, `D`, `C24A`,
+etc.) -- if it doesn't, fall back to the "Old" classification or the
+ICIO-HS conversion table the same page also provides.
 
 **Getting the real data into your own copy**: the actual ICIO zip
 (`2017-2022_EXT.zip` or similar, ~136MB, linked from OECD's ICIO page) sits
