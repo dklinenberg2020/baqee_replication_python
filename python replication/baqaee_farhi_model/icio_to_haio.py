@@ -54,11 +54,25 @@ Two known ICIO-specific gaps, both documented in baqaee_farhi_model/README.md:
       factor-category count from alpha_VA's own shape. Pass your own
       alpha_VA if you have a supplementary factor-split source.
     - No trade elasticities of its own -- must be supplied externally.
-      Use Fontagne-Guimbard-Orefice's "New ICIO classification" (March 2026
+      `fontagne_icio_trade_elast.csv` in this directory is the real
+      Fontagne-Guimbard-Orefice "New ICIO classification" (March 2026
       update, https://sites.google.com/view/product-level-trade-elasticity)
-      -- not the "Old" one, which predates the sector splits (C24A/C24B,
-      C301/C302T309) OECD's 2025 ICIO edition introduced and won't have
-      matching codes.
+      download -- confirmed to use the exact same sector codes as the real
+      ICIO file (`B06`, `C24A`, `C24B`, etc.), so the "New" vs. "Old"
+      classification call was correct. See `load_fontagne_trade_elast()`
+      below and its SIGN CONVENTION CAVEAT before treating its output as
+      ground truth.
+
+fontagne_icio_trade_elast.csv covers only 32 of the ~48 non-'T' ICIO
+sectors -- trade elasticities are only estimable for tradable goods, so
+most services (F, G, I, K, L, N, O, P, Q, S, ...) have no row at all, which
+is expected, not a download error. Of those 32, four have `epsilon_icio ==
+NA` even though the sector itself has a row: A02 (forestry), B05 (coal
+mining), D (electricity/gas supply), R (recreation) -- Fontagne et al.'s own
+estimation didn't converge for these, for whatever reason (thin trade
+volume, insufficient tariff variation for identification). B06 (crude
+petroleum and natural gas extraction -- what a Hormuz-type scenario would
+actually shock) DOES have a valid estimate: -5.44.
 """
 import numpy as np
 import pandas as pd
@@ -94,6 +108,42 @@ def _fold_excluded_into_row(df, countries, row_label, va_label):
     df = df.groupby(df.index).sum()
     df = df.T.groupby(df.T.index).sum().T
     return df
+
+
+def load_fontagne_trade_elast(sectors, csv_path='fontagne_icio_trade_elast.csv'):
+    """Load Fontagne-Guimbard-Orefice's ICIO-classification trade
+    elasticities and return a (len(sectors),) array in nested_ces.py's
+    `trade_elast` convention, ordered to match `sectors`.
+
+    SIGN CONVENTION CAVEAT -- NOT independently verified: the CSV's
+    `epsilon_icio` column is NEGATIVE (e.g. -5.44 for B06), consistent with
+    the standard trade-literature convention of reporting the elasticity of
+    trade flows with respect to (1 + trade cost) -- theoretically
+    epsilon = -(sigma - 1) for a CES/Armington elasticity of substitution
+    sigma. nested_ces.py's own `trade_elast` variable satisfies
+    trade_elast + 1 == sigma (see nested_ces.py's docstring and
+    io_reorder.py's AES_func.m-matched formulas), which combined with the
+    above gives trade_elast = sigma - 1 = -epsilon_icio -- the transform
+    used below. This is a plausible, evidence-consistent derivation (it
+    lands in the same 1-15 range as WIOD's own trade_elast_2008.mat, which
+    is positive), but it has NOT been empirically cross-checked against
+    trade_elast_2008.mat's actual values for overlapping sectors the way
+    every other number in this codebase has been -- do that cross-check
+    (via Fontagne et al.'s own WIOD-classification download, also on their
+    site) before trusting this for anything beyond illustrative use.
+
+    Raises KeyError for any requested sector missing from the CSV entirely
+    (~half of ICIO's non-'T' sectors -- see module docstring), and leaves
+    NaN for sectors present but with epsilon_icio == NA (A02, B05, D, R at
+    last check) -- both cases need a caller decision (exclude the sector,
+    or substitute a literature value from ../python-second-order/sigma_literature.py),
+    not a silent default.
+    """
+    df = pd.read_csv(csv_path, index_col='icio2025')
+    missing = [s for s in sectors if s not in df.index]
+    if missing:
+        raise KeyError(f'sectors not in {csv_path} (no trade elasticity estimated at all): {missing}')
+    return -df.loc[sectors, 'epsilon_icio'].to_numpy(dtype=float)
 
 
 def icio_to_haio(df, countries, sectors, trade_elast, alpha_VA=None,

@@ -121,31 +121,60 @@ itself, and crude oil/gas *extraction* (`B06`) is its own ICIO sector,
 separate from `D` (electricity/gas/steam *supply*) -- `B06` is the right
 target for a Hormuz/crude-specific shock.
 
-**Real-data run, end to end**: Saudi Arabia + UAE (sellers) facing a 150%
-iceberg cost on `B06` exports to the US, with a made-up placeholder
-`trade_elast` (real Fontagne-Guimbard-Orefice values still needed -- see
-below), tracking `SAU`, `ARE`, `USA` and a `ROW` composite for every other
-country:
+**Real-data run, end to end, with real trade elasticities**: Saudi Arabia +
+UAE (sellers) facing a 150% iceberg cost on `B06` exports to the US,
+tracking `SAU`, `ARE`, `USA` and a `ROW` composite for every other country,
+restricted to the 28 sectors Fontagne-Guimbard-Orefice actually estimated a
+usable elasticity for:
 
 ```python
 import pandas as pd
-from icio_to_haio import icio_to_haio
+from icio_to_haio import icio_to_haio, load_fontagne_trade_elast
 from run_model import run_scenario
 
 df = pd.read_csv('2022_SML.csv', index_col=0)   # not committed -- see "Getting the real data" below
 countries = ['SAU', 'ARE', 'USA', 'ROW']
-sectors = [s for s in ALL_SECTORS if s not in ('T', 'B05')]  # see "two real data quirks" below
+fontagne = pd.read_csv('fontagne_icio_trade_elast.csv', index_col='icio2025')
+sectors = [s for s in fontagne[fontagne['epsilon_icio'].notna()].index if s not in ('T', 'B05')]
+trade_elast = load_fontagne_trade_elast(sectors)   # see its SIGN CONVENTION CAVEAT below
+
 haio = icio_to_haio(df, countries, sectors, trade_elast, row_label='ROW')
 result = run_scenario(None, countries, [{'sellers': [1, 2], 'buyers': [3],
                                           'sectors': [sectors.index('B06')], 'intensity': 150}],
                       ngrid=5, haio=haio)
-# {'SAU': -0.18%, 'ARE': +0.19%, 'USA': -0.008%, 'ROW': -0.001%, 'World': -0.003%} (log GNE)
+# {'SAU': -0.43%, 'ARE': +0.14%, 'USA': -0.015%, 'ROW': +0.001%, 'World': -0.005%} (log GNE)
 ```
 
 Real, sensible general-equilibrium output: Saudi Arabia (the more
-US-dependent of the two sellers) loses; the US barely notices (two sellers,
-one sector, out of its whole economy); UAE's small *gain* is a genuine
-substitution effect worth digging into further, not a bug.
+US-dependent of the two sellers) loses noticeably more than with a
+placeholder elasticity; the US barely notices (two sellers, one sector, out
+of its whole economy); UAE's small *gain* is a genuine substitution effect
+worth digging into further, not a bug.
+
+**`fontagne_icio_trade_elast.csv`** (committed, 2.4KB -- unlike the 90MB
+ICIO file itself) is the real Fontagne-Guimbard-Orefice "New ICIO
+classification" download; `load_fontagne_trade_elast(sectors)` reads it and
+converts to `nested_ces.py`'s convention. **Two things worth knowing before
+trusting its numbers**:
+1. It only covers **32 of ICIO's ~48 non-`T` sectors** -- trade elasticities
+   are only estimable for tradable goods, so most services (`F`, `G`, `I`,
+   `K`, `L`, `N`, `O`, `P`, `Q`, `S`, ...) have no row at all, and it's
+   missing `B09` too. Of the 32 it does have, 4 are `NA` anyway (`A02`,
+   `B05`, `D`, `R`) -- Fontagne et al.'s own estimation didn't converge for
+   those. `B06` (crude petroleum and natural gas -- what a Hormuz scenario
+   actually needs) does have a valid value: -5.44.
+2. **The sign/offset conversion is a plausible derivation, not an
+   independently verified fact.** The CSV reports a negative number
+   (`epsilon_icio`); `nested_ces.py` needs a positive `trade_elast` where
+   `trade_elast + 1` is a CES elasticity of substitution. `load_fontagne_trade_elast()`
+   uses `trade_elast = -epsilon_icio`, based on the standard trade-literature
+   convention that a reported elasticity like this equals `-(sigma-1)` --
+   it lands in the same 1-15 range as WIOD's own (positive) `trade_elast_2008.mat`,
+   which is a good sign, but this has **not** been cross-checked the way
+   every other number in this codebase has been. The rigorous check: download
+   Fontagne et al.'s WIOD-classification file from the same page, apply the
+   same transform, and compare against the real `trade_elast_2008.mat`
+   values already in this repo for overlapping sectors.
 
 **Country coverage caveat found along the way**: ICIO does **not** track
 Iran, Iraq, or Kuwait individually -- only Saudi Arabia and the UAE get
@@ -189,18 +218,15 @@ Always pass this unless your `countries` list already covers every country
 in the file.
 
 **Getting `trade_elast`**: ICIO has none of its own (see "Two known
-ICIO-specific gaps" above) -- use Fontagne, Guimbard and Orefice's
-product-level trade elasticities
-(https://sites.google.com/view/product-level-trade-elasticity), which
-publishes a version pre-aggregated specifically to ICIO's own sector
-codes. Use the **"New ICIO classification" (March 2026 update)**, not the
-"Old" one -- OECD's 2025 ICIO edition introduced sector splits
-(`C24A`/`C24B`, `C301`/`C302T309`) that only the new classification
-reflects; the old one predates them and its codes won't line up with
-`2022_SML.csv`'s. Sanity-check this once downloaded: its sector-code column
-should contain exactly the strings this file uses (`B06`, `D`, `C24A`,
-etc.) -- if it doesn't, fall back to the "Old" classification or the
-ICIO-HS conversion table the same page also provides.
+ICIO-specific gaps" above) -- **already done**, see
+`fontagne_icio_trade_elast.csv` and `load_fontagne_trade_elast()` above.
+Source: Fontagne, Guimbard and Orefice's product-level trade elasticities
+(https://sites.google.com/view/product-level-trade-elasticity),
+specifically the **"New ICIO classification" (March 2026 update)** -- this
+was the right call to make in advance: its sector codes (`B06`, `C24A`,
+`C24B`, `C301`/`C302T309`, ...) match the real `2022_SML.csv` file exactly,
+which the "Old" classification (predating OECD's 2025 ICIO sector splits)
+would not have.
 
 **Getting the real data into your own copy**: the actual ICIO zip
 (`2017-2022_EXT.zip` or similar, ~136MB, linked from OECD's ICIO page) sits
@@ -275,6 +301,7 @@ package wrapper is purely additive.
 | `main_load_data(haio, initial_tariff_index, factor_index)` | Source-agnostic: turns a standardized HAIO dict into the model's standard-form inputs. Normally called for you by `run()`. |
 | `io_reorder(keep_c, data_dir)` | The WIOD-specific loader: WIOD 2008 `.mat` files -> a HAIO dict. |
 | `icio_to_haio(df, countries, sectors, trade_elast, row_label=None, ...)` | An OECD-ICIO loader, verified against a real downloaded file: a plain-CSV-shaped DataFrame -> a HAIO dict. Pass `row_label` (e.g. `'ROW'`) to fold excluded countries in rather than dropping them -- see below. |
+| `load_fontagne_trade_elast(sectors, csv_path=...)` | Loads real Fontagne-Guimbard-Orefice trade elasticities for ICIO, converted to `nested_ces.py`'s convention -- see its sign-convention caveat below. |
 | `value_added_shares`, `response`, `solve_dlambda_F_all` | The model internals (Allen elasticities, one discretization step's equilibrium response, the linear-system solve). You won't normally call these directly. |
 
 ### `run_scenario()`'s return value
