@@ -7,32 +7,37 @@ arithmetic (transpose to a buyer x seller matrix, row-normalize for
 intermediate-input shares, column-normalize for final-consumption shares,
 value-added share = VA / (VA + total intermediate cost)), just against
 OECD ICIO's plain-CSV row/column layout instead of WIOD's packed binary
-block structure, which is most of why this loader is much shorter than
-io_reorder.py.
+block structure.
 
-EXPECTED INPUT FORMAT: a single matrix (pandas DataFrame, or a path to a CSV
-in this shape) whose row and column labels are '{country}_{sector}' for
-every country-sector pair (the same codes on both axes, matching OECD's own
-ICIO table layout: https://www.oecd.org/en/data/datasets/inter-country-input-output-tables.html),
-PLUS:
-  - one extra row per country, its total value added, labeled '{country}_VA'
-  - one extra column per country, its total final demand, labeled
-    '{country}_FD' -- this is a SIMPLIFICATION of the real OECD file's
-    several separate final-demand columns per country (household
-    consumption, NPISH, government consumption, gross fixed capital
-    formation, inventory change, direct purchases abroad); sum those
-    together into one '{country}_FD' column yourself before calling this
-    function if you're working from an actual OECD release.
+EXPECTED INPUT FORMAT: verified against OECD's own ICIO documentation
+(the "ReadMe_icio_csv" file and 2025-edition country/sector notes, both
+retrieved from stats.oecd.org -- see baqaee_farhi_model/README.md for what
+this confirmed/corrected). A single matrix (pandas DataFrame, or a path to
+a CSV in this shape):
+  - Row and column labels for the intermediate-transactions block are
+    '{country}_{sector}' for every country-sector pair (e.g. 'AUS_B06'),
+    the same codes on both axes.
+  - ONE extra row, value added at basic prices, labeled 'VA' by default --
+    NOT one row per country. Its columns are the same country-sector
+    labels as the intermediate block.
+  - Final demand is 6 named categories per country in the real OECD file:
+    HFCE, NPISH, GGFC, GFCF, INVNT, P33 (household consumption, non-profit
+    institutions, government consumption, gross fixed capital formation,
+    inventory change, direct purchases abroad). This loader sums those 6
+    into one total per country itself (`fd_categories` below) -- you do
+    not need to pre-sum them.
 
-NOT YET RUN AGAINST A REAL DOWNLOADED OECD ICIO RELEASE in this repository
--- see the toy worked example in this file's __main__ block and
-baqaee_farhi_model/README.md for exactly what's been verified (the parsing
-and normalization logic runs correctly end-to-end, including through
-run_scenario(), on a small synthetic table with the same shape) versus what
-still needs checking against a real file (ICIO's actual current column
-names, whether the "sum the FD columns yourself" simplification above holds
-for whatever vintage you download, and the Russia-imputation caveat
-discussed separately -- see the top-level README).
+NOT YET RUN AGAINST A REAL DOWNLOADED OECD ICIO RELEASE in this repository.
+The actual current data file (2017-2022_EXT.zip, ~136MB, referenced from
+OECD's ICIO page) is hosted on www.oecd.org behind a Cloudflare bot
+challenge that a plain HTTP client cannot pass -- unlike the documentation
+PDFs/README above, which OECD happens to also serve unprotected from
+stats.oecd.org. Getting a real file into this loader therefore needs either
+a manual browser download (see baqaee_farhi_model/README.md for exactly
+what to do with it once downloaded) or a different access path; the
+parsing/normalization logic here is now matched to OECD's own documented
+structure (verified, not guessed) but has only been exercised end-to-end on
+the synthetic toy table in this file's __main__ block.
 
 Two known ICIO-specific gaps, both documented in baqaee_farhi_model/README.md:
     - No labor/skill factor breakdown (unlike WIOD SEA's 4 categories) --
@@ -47,9 +52,11 @@ Two known ICIO-specific gaps, both documented in baqaee_farhi_model/README.md:
 import numpy as np
 import pandas as pd
 
+FD_CATEGORIES = ('HFCE', 'NPISH', 'GGFC', 'GFCF', 'INVNT', 'P33')
+
 
 def icio_to_haio(df, countries, sectors, trade_elast, alpha_VA=None,
-                  va_suffix='_VA', fd_suffix='_FD'):
+                  va_label='VA', fd_categories=FD_CATEGORIES):
     """
     Parameters
     ----------
@@ -62,12 +69,15 @@ def icio_to_haio(df, countries, sectors, trade_elast, alpha_VA=None,
         want one, matching io_reorder.py's own ROW handling.
     sectors : list of sector codes, in the order they should appear (fixes
         N = len(sectors) and each producer's position within its country's
-        block).
+        block) -- e.g. OECD's own codes like 'B06' (crude petroleum and
+        natural gas extraction) or 'D' (electricity, gas, steam and air
+        conditioning supply, i.e. utility-side, NOT the same sector as B06).
     trade_elast : (N,) array-like, sector order must match `sectors`.
     alpha_VA : optional (C*N, F_data) array -- omit for the no-factor-split
         fast path (a single all-ones column, F_data=1).
-    va_suffix, fd_suffix : label suffixes identifying each country's VA row
-        / FD column.
+    va_label : row label for the single value-added row (default 'VA').
+    fd_categories : column-label suffixes to sum per country into that
+        country's total final demand (default: OECD's own 6 categories).
 
     Returns
     -------
@@ -76,15 +86,18 @@ def icio_to_haio(df, countries, sectors, trade_elast, alpha_VA=None,
     """
     C, N = len(countries), len(sectors)
     cs_labels = [f'{c}_{s}' for c in countries for s in sectors]  # (CN,) fixed row/col order
-    va_labels = [f'{c}{va_suffix}' for c in countries]
-    fd_labels = [f'{c}{fd_suffix}' for c in countries]
+    fd_labels = {c: [f'{c}_{cat}' for cat in fd_categories] for c in countries}
 
     # Raw ICIO convention (like WIOD/WIOT): row = seller/origin, column =
     # buyer/destination. Transpose so row = buyer, matching Omega's
     # documented (i,j) = "expenditure share of producer i on good j".
     IO = df.loc[cs_labels, cs_labels].to_numpy(dtype=float).T  # (CN, CN), row=buyer
-    FD = df.loc[cs_labels, fd_labels].to_numpy(dtype=float)    # (CN, C), row=good, col=household
-    VA = df.loc[va_labels, cs_labels].to_numpy(dtype=float).sum(axis=0)  # (CN,)
+
+    # Sum each country's 6 final-demand categories into one column.
+    FD = np.column_stack([df.loc[cs_labels, fd_labels[c]].to_numpy(dtype=float).sum(axis=1)
+                           for c in countries])  # (CN, C)
+
+    VA = df.loc[va_label, cs_labels].to_numpy(dtype=float)  # (CN,) -- ONE row, not one per country
 
     row_sums = IO.sum(axis=1, keepdims=True)
     Omega = np.divide(IO, row_sums, out=np.zeros_like(IO), where=row_sums != 0)
@@ -111,28 +124,47 @@ def icio_to_haio(df, countries, sectors, trade_elast, alpha_VA=None,
 if __name__ == '__main__':
     # --- Toy worked example: 2 countries x 2 sectors, made-up numbers -----
     # NOT real ICIO data -- purely to show (a) the exact input shape
-    # icio_to_haio() expects and (b) that the output is a valid HAIO dict
-    # that runs cleanly through run_scenario(). See README.md for this
-    # printed out alongside the resulting HAIO arrays.
-    countries = ['A', 'B']
-    sectors = ['S1', 'S2']
-    cs = [f'{c}_{s}' for c in countries for s in sectors]  # A_S1, A_S2, B_S1, B_S2
+    # icio_to_haio() expects, matched to OECD's own verified structure
+    # (one shared VA row, 6 final-demand categories per country), and (b)
+    # that the output is a valid HAIO dict that runs cleanly through
+    # run_scenario(). See README.md for this printed out alongside the
+    # resulting HAIO arrays. Sector codes use OECD's real naming
+    # ('B06' = crude petroleum & natural gas extraction) purely for realism.
+    countries = ['AUS', 'DEU']
+    sectors = ['B06', 'D']  # crude oil/gas extraction; electricity/gas/steam supply
+    cs = [f'{c}_{s}' for c in countries for s in sectors]  # AUS_B06, AUS_D, DEU_B06, DEU_D
 
-    # Rows/cols: A_S1, A_S2, B_S1, B_S2, A_FD, B_FD (VA rows appended below)
+    fd_cols = [f'{c}_{cat}' for c in countries for cat in FD_CATEGORIES]
+    columns = cs + fd_cols
+
+    # Intermediate flows (4x4) -- rows sum arbitrarily, not from real data.
+    intermediate = [
+        [5, 3, 2, 1],
+        [2, 6, 1, 2],
+        [1, 2, 4, 3],
+        [1, 1, 2, 5],
+    ]
+    # Final demand: split a made-up total per country evenly-ish across its
+    # 6 categories, per row (good).
+    fd_totals = {  # (good) -> per-country total FD, before splitting into 6 categories
+        'AUS': [10, 8], 'DEU': [3, 12],  # AUS_B06/AUS_D rows -> DEU_B06/DEU_D rows below
+    }
+    fd_block = [
+        [10, 0, 0, 0, 0, 0,  4, 0, 0, 0, 0, 0],   # AUS_B06 row: all 10 in HFCE, all 4 in HFCE
+        [0, 8, 0, 0, 0, 0,   0, 3, 0, 0, 0, 0],    # AUS_D row: spread differently, illustrative only
+        [0, 0, 3, 0, 0, 0,   0, 0, 12, 0, 0, 0],   # B_S1-equivalent (DEU_B06)
+        [0, 0, 0, 2, 0, 0,   0, 0, 0, 9, 0, 0],    # DEU_D row
+    ]
+    rows_cs = [r + fd for r, fd in zip(intermediate, fd_block)]
+    va_row = [9, 7, 8, 6]  # ONE row, value added per country-sector column
+
     data = pd.DataFrame(
-        [
-            [5, 3, 2, 1, 10, 4],   # A_S1 sells to: A_S1 A_S2 B_S1 B_S2 A_FD B_FD
-            [2, 6, 1, 2, 8, 3],    # A_S2
-            [1, 2, 4, 3, 3, 12],   # B_S1
-            [1, 1, 2, 5, 2, 9],    # B_S2
-            [9, 7, 0, 0, 0, 0],    # A_VA (value added, only has entries under cs columns)
-            [0, 0, 8, 6, 0, 0],    # B_VA
-        ],
-        index=cs + ['A_VA', 'B_VA'],
-        columns=cs + ['A_FD', 'B_FD'],
+        rows_cs + [va_row],
+        index=cs + ['VA'],
+        columns=columns,
     )
 
-    print('=== Toy raw ICIO-shaped input ===')
+    print('=== Toy raw ICIO-shaped input (OECD-verified structure) ===')
     print(data)
     print()
 
@@ -147,6 +179,6 @@ if __name__ == '__main__':
 
     print('=== Feeding it straight into run_scenario() ===')
     from run_model import run_scenario
-    result = run_scenario(None, countries, [{'sellers': [1], 'buyers': [2], 'sectors': None, 'intensity': 50}],
+    result = run_scenario(None, countries, [{'sellers': [1], 'buyers': [2], 'sectors': [0], 'intensity': 50}],
                            ngrid=3, haio=haio)
     print(result)

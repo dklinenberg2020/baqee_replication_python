@@ -76,37 +76,63 @@ split), and `run_scenario()` runs it completely unchanged. See
 semantics -- that docstring is the authoritative contract definition.
 `io_reorder.py` is simply the WIOD implementation of it.
 
-### `icio_to_haio.py`: a first OECD ICIO loader, with a toy worked example
+### `icio_to_haio.py`: an OECD ICIO loader, verified against OECD's own docs
 
 `icio_to_haio.py` implements this contract for OECD ICIO's plain-CSV layout
 -- same normalization arithmetic as `io_reorder.py` (transpose to a buyer x
 seller matrix, row-normalize for intermediate-input shares, column-normalize
 for final-consumption shares, value-added share = VA / (VA + intermediate
 cost)), just against ICIO's row/column bookkeeping instead of WIOD's packed
-binary blocks. **This has not yet been run against a real downloaded OECD
-ICIO release** -- see the module docstring for exactly what's still unverified
-(ICIO's actual current column names, the "sum the final-demand columns
-yourself" simplification, the Russia-imputation caveat from the top-level
-README) versus what's already confirmed to work (the parsing/normalization
-logic itself, end to end through `run_scenario()`).
+binary blocks.
+
+**The expected input format is now checked against OECD's own published
+documentation** (their "ReadMe_icio_csv" file and 2025-edition country/sector
+notes, both retrieved from `stats.oecd.org`), not just a guess -- this
+corrected two assumptions the first version of this loader made:
+value added is **one shared row** for the whole table (not one row per
+country), and final demand is **6 named categories per country**
+(`HFCE, NPISH, GGFC, GFCF, INVNT, P33`), which the loader now sums itself
+rather than asking the caller to pre-sum. It also surfaced a correction to
+something said earlier in this project: crude oil/gas *extraction*
+(`B06`) is its own ICIO sector, separate from `D` (electricity/gas/steam
+*supply*) -- `B06` is the right target for a Hormuz/crude-specific shock.
+
+**Still not run against a real downloaded OECD ICIO release.** The actual
+data file (`2017-2022_EXT.zip`, ~136MB, linked from OECD's ICIO page) sits
+behind a Cloudflare bot challenge on `www.oecd.org` that no plain HTTP
+client can pass -- unlike the documentation PDFs, which OECD happens to also
+serve unprotected from `stats.oecd.org`. Getting a real file into this
+loader needs a manual browser download; once you have it:
+
+```python
+import pandas as pd
+from icio_to_haio import icio_to_haio
+
+df = pd.read_csv('2020.csv', index_col=0)   # one file per year in the OECD zip
+haio = icio_to_haio(df, countries=['USA', 'SAU', 'IRQ', ...], sectors=['B06', ...],
+                     trade_elast=[...])
+result = run_scenario(None, countries, shocks, haio=haio)
+```
 
 Running `python icio_to_haio.py` prints a small **synthetic** (not real
 data) 2-country x 2-sector example showing exactly what "the standard data
-should look like after cleaning" means in practice. The toy input --
-country-sector labels on both axes, one value-added row and one final-demand
-column per country:
+should look like after cleaning" means in practice, using OECD's real sector
+codes for realism (`B06`, `D`) even though the numbers are made up. The toy
+input -- country-sector labels on both axes, ONE value-added row, 6
+final-demand columns per country:
 
 ```
-      A_S1  A_S2  B_S1  B_S2  A_FD  B_FD
-A_S1     5     3     2     1    10     4
-A_S2     2     6     1     2     8     3
-B_S1     1     2     4     3     3    12
-B_S2     1     1     2     5     2     9
-A_VA     9     7     0     0     0     0
-B_VA     0     0     8     6     0     0
+         AUS_B06  AUS_D  DEU_B06  DEU_D  AUS_HFCE ... AUS_P33  DEU_HFCE ... DEU_P33
+AUS_B06        5      3        2      1        10 ...       0         4 ...       0
+AUS_D          2      6        1      2         0 ...       0         3 ...       0
+DEU_B06        1      2        4      3         0 ...       0        12 ...       0
+DEU_D          1      1        2      5         0 ...       0         0 ...       9
+VA             9      7        8      6       NaN ...     NaN       NaN ...     NaN
 ```
 
-produces this standardized HAIO dict:
+(`VA`'s row is only ever read at the 4 country-sector columns, so the `NaN`s
+under the final-demand columns are irrelevant and never touched.) This
+produces the standardized HAIO dict:
 
 ```
 Omega (4x4, row-normalized intermediate-input shares):
@@ -131,11 +157,12 @@ GDP_weights (each country's share of total final demand):
 [0.451 0.549]
 ```
 
-which then runs cleanly through `run_scenario(None, ['A', 'B'], shocks,
+which then runs cleanly through `run_scenario(None, ['AUS', 'DEU'], shocks,
 haio=haio)` and returns real (if economically meaningless, since the input
 numbers are made up) `dlogW` output -- confirming the contract and the
-loader logic both work, independent of whether ICIO's real file matches the
-simplified two-suffix column-naming assumption above.
+loader logic both work against OECD's actual documented structure,
+independent of the still-open question of getting the real file past
+Cloudflare.
 
 If you're working from inside this directory instead (the original usage
 pattern -- `cd baqaee_farhi_model && python run_paper_scenario.py`), nothing
