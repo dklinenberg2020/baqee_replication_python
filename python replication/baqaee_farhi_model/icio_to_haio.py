@@ -140,10 +140,9 @@ def load_fontagne_trade_elast(sectors, csv_path='fontagne_icio_trade_elast.csv')
     Raises KeyError for any requested sector missing from the CSV entirely
     (~half of ICIO's non-'T' sectors -- see module docstring) OR present but
     with epsilon_icio == NA (A02, B05, D, R at last check) -- both cases
-    need a caller decision (exclude the sector, or substitute a literature
-    value from ../python-second-order/sigma_literature.py), not a silent
-    NaN that would otherwise propagate unnoticed into nested_ces.py's
-    arithmetic.
+    need a caller decision (exclude the sector, or substitute a value from
+    your own literature source), not a silent NaN that would otherwise
+    propagate unnoticed into nested_ces.py's arithmetic.
     """
     df = pd.read_csv(csv_path, index_col='icio2025')
     missing = [s for s in sectors if s not in df.index]

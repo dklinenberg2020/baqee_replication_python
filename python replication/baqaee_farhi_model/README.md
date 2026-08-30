@@ -7,8 +7,9 @@ Bachmann, Baqaee, Bayer, Kuhn, Löschel, Moll, Peichl, Pittel and Schularick
 (2024), "What if? The macroeconomic and distributional effects for Germany
 of a stop of energy imports from Russia," *Economica* 91(364).
 
-This is a translation of the original authors' MATLAB code
-(`../../replication/baqaee_farhi_model/`), validated element-wise against
+This is a translation of the original authors' MATLAB code (not included in
+this folder -- this package is standalone and does not need it at runtime;
+mentioned here only for provenance), validated element-wise against
 its actual output under GNU Octave 8.4.0 -- see "Validation" below -- and
 checked formula-by-formula against the theory paper's own Computational
 Appendix (Appendix D) and general Allen-Uzawa elasticity results (Appendix
@@ -41,6 +42,7 @@ DATA (.mat / .csv)                          --->  main_load_data.py  --->  neste
 | `run_paper_scenario.py` | a ready-to-run driver with the paper's exact settings on WIOD 2008 (all 41 WIOD countries, EU-vs-Russia) |
 | `run_paper_scenario_icio.py` | the same EU-vs-Russia scenario, rebuilt on real OECD ICIO 2022 data + `combined_trade_elast.csv` instead of WIOD -- see "Running the paper scenario on ICIO instead of WIOD" below. Much slower: expect hours, not minutes (see that section). |
 | `__init__.py` | makes this directory importable as a package from anywhere (see below) |
+| `requirements.txt` | third-party dependencies (`pip install -r requirements.txt`) |
 
 ## Installing / importing this as a standalone package
 
@@ -49,7 +51,7 @@ There's no `pip install` step -- just put the parent directory on
 
 ```python
 import sys
-sys.path.insert(0, "/path/to/python replication")   # the directory *containing* baqaee_farhi_model/
+sys.path.insert(0, "/path/to/parent_dir")   # whatever directory *contains* baqaee_farhi_model/ -- any name/location works
 import baqaee_farhi_model as bf
 
 result = bf.run_scenario(
@@ -501,17 +503,21 @@ just to an isolated illustrative case.
 
 ## Data included
 
-Three WIOD 2013-release, benchmark-year-2008 files -- everything `io_reorder.py`
-actually reads (see the top-level `python replication/README.md` for the
-full data provenance). The original MATLAB replication package
-(`../../replication/baqaee_farhi_model/`) ships three additional `.mat`
-files (`WIOD_SEA_14.mat`, `ahs_all.mat`, `wiot2008_row_apr12.mat`) used only
-by `IO_reorder_init_tariff.m`, the "with initial tariffs" variant that was
-never ported (the paper's own driver script doesn't use it either) -- those
-are intentionally not duplicated here. Plus two small committed CSVs
-`icio_to_haio.py` reads (real OECD ICIO files themselves, like
-`2022_SML.csv`, are `.gitignore`d -- see "Getting the real data into your
-own copy" above -- and must be downloaded separately).
+This folder is standalone: everything needed to run the WIOD-based scenario
+(`run_paper_scenario.py`) ships in this directory already -- no other part
+of any larger repository is required. The only data NOT included is a real
+OECD ICIO release (e.g. `2022_SML.csv`, needed only for
+`run_paper_scenario_icio.py`/`icio_to_haio.py`) -- too large to commit; see
+"Getting the real data into your own copy" above for how to obtain your own
+copy and drop it into this same directory.
+
+Three WIOD 2013-release, benchmark-year-2008 files -- everything
+`io_reorder.py` actually reads -- plus two small committed CSVs
+`icio_to_haio.py` reads. The original authors' MATLAB replication package
+also ships three additional `.mat` files (`WIOD_SEA_14.mat`, `ahs_all.mat`,
+`wiot2008_row_apr12.mat`) used only by `IO_reorder_init_tariff.m`, the "with
+initial tariffs" variant that was never ported (the paper's own driver
+script doesn't use it either) -- those are intentionally not needed here.
 
 | File | Contents |
 |---|---|
@@ -525,21 +531,14 @@ own copy" above -- and must be downloaded separately).
 
 Every layer checked element-wise against the actual MATLAB/Octave output at
 a scale small enough for Octave to run without exhausting memory (`< 1e-14`
-to `< 3e-17` depending on layer -- see the top-level `python
-replication/README.md`'s "Validation" section for the full breakdown by
-file), plus a full formula-by-formula check against the underlying theory
-paper's Computational Appendix (Appendix D) and general Allen-Uzawa
-elasticity result (Appendix E) -- every closed-form AES expression in
-`nested_ces.py` was independently re-derived from the theory paper's own
-notation and matched term-for-term, not just checked numerically. The full
-41-country run itself (this being the one case Octave can't execute here to
-cross-check bit-for-bit) reproduces the paper's own stated Table 2 column
-(2) figure (Germany GNE loss 0.2-0.3%) almost exactly: see
-`paper_scenario_result.json`.
-
-## See also
-
-- `../README.md` -- the Python replication package this lives inside.
-- `../../README.md` -- the top-level overview of all four packages
+to `< 3e-17` depending on layer), plus a full formula-by-formula check
+against the underlying theory paper's Computational Appendix (Appendix D)
+and general Allen-Uzawa elasticity result (Appendix E) -- every closed-form
+AES expression in `nested_ces.py` was independently re-derived from the
+theory paper's own notation and matched term-for-term, not just checked
+numerically. The full 41-country run itself (this being the one case
+Octave can't execute due to memory limits, so it can't be cross-checked
+bit-for-bit) reproduces the paper's own stated Table 2 column (2) figure
+(Germany GNE loss 0.2-0.3%) almost exactly: see `paper_scenario_result.json`.
   (this one, the rest of the Python replication, and the two closed-form
   second-order-approximation packages in Python and R).

@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+
+# Real OECD ICIO release files (e.g. 2022_SML.csv) -- too large to commit,
+# not included in this package; download your own copy (see README.md's
+# "Getting the real data into your own copy") and drop it in this
+# directory. Year-prefixed so the small committed elasticity CSVs
+# (fontagne_icio_trade_elast.csv, combined_trade_elast.csv) are unaffected.
+[0-9][0-9][0-9][0-9]*.csv
