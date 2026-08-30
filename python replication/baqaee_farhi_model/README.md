@@ -218,7 +218,7 @@ Always pass this unless your `countries` list already covers every country
 in the file.
 
 **Getting `trade_elast`**: ICIO has none of its own (see "Two known
-ICIO-specific gaps" above). Two layers exist here:
+ICIO-specific gaps" above). Three layers exist here:
 
 1. `fontagne_icio_trade_elast.csv` / `load_fontagne_trade_elast()` -- the
    raw Fontagne, Guimbard and Orefice download (product-level trade
@@ -227,30 +227,58 @@ ICIO-specific gaps" above). Two layers exist here:
    codes exactly). Covers 28 of 49 non-`T` sectors -- **goods only**;
    tariff-based identification doesn't work for services, which have no
    tariffs to vary.
-2. **`combined_trade_elast.csv` / `load_combined_trade_elast()`** -- fills
-   most of that services gap by adding Ahmad and Schreiber (2024, USITC
-   Working Paper), "Estimating Elasticities for Tradable Services in Policy
-   Simulations," which estimates services elasticities directly (a
-   markup/monopolistic-competition identification, since there's no tariff
-   variation to exploit) at the GTAP sector level. Covers **44 of 49**
-   sectors -- every row carries a `source` column
-   (`fontagne_guimbard_orefice_2022` or `ahmad_schreiber_2024`) and a
-   `mapping_quality` column (`direct` or `approximate`), so you always know
-   which number came from where and how confidently. Still missing after
-   both sources: `A02` (forestry), `B05` (coal mining), `B09` (mining
-   support), `D` (electricity/gas supply), `O` (public administration --
-   arguably correctly omitted, since government isn't really "traded").
+2. Ahmad and Schreiber (2024, USITC Working Paper), "Estimating
+   Elasticities for Tradable Services in Policy Simulations," estimates
+   services elasticities directly (a markup/monopolistic-competition
+   identification, since there's no tariff variation to exploit) at the
+   GTAP sector level -- adds 16 more sectors.
+3. A small fallback layer sourced from the **original Bachmann-Baqaee
+   et al. paper's own `trade_elast_2008.mat`** (already in this repo),
+   found by matching the original MATLAB driver script's hardcoded
+   30-sector label list against that file's values by index -- adds 3
+   more real sectors (`A02`, `B05`, `B09`) plus one flagged placeholder
+   (`D`, see below).
 
-**The two sources report fundamentally different objects and need
-different sign/offset transforms** -- getting this wrong is the easiest way
-to silently corrupt every number downstream:
+**`combined_trade_elast.csv` / `load_combined_trade_elast()`** is all
+three combined -- **48 of ICIO's 49 non-`T` sectors**, every row carrying
+a `source` column (`fontagne_guimbard_orefice_2022`, `ahmad_schreiber_2024`,
+or `bachmann_baqaee_2024_wiod`) and a three-tier `mapping_quality` column,
+weakest last:
+   - `direct` -- a clean 1:1 sector match.
+   - `approximate` -- a many-to-one mapping (GTAP or WIOD bundles several
+     ICIO sectors into one broader category) -- e.g. `A02` (forestry) and
+     `B05`/`B09` (mining) come from WIOD's own coarser "Agriculture,
+     Hunting, Forestry and Fishing" and "Mining and Quarrying" categories.
+   - `placeholder` -- not a real estimate at all: `D` (electricity/gas
+     supply)'s value is **exactly 5.00, the paper's own admitted flat
+     default** -- checking `trade_elast_2008.mat`'s actual values revealed
+     that *every* WIOD sector from electricity/gas onward (all services)
+     is exactly 5.00 with zero variation, meaning the original authors used
+     one placeholder number for everything past manufacturing rather than
+     sourcing real values individually. Using it here just adopts that
+     same admitted guess, not a genuine resolution.
+
+**Only `O` (public administration) is left out on purpose**, even though
+the paper's own value is there too (also the same flat 5.00 placeholder):
+government services are essentially non-traded by nature, so having *no*
+trade elasticity for `O` is arguably correct rather than a gap -- filling
+it with a number already known to be an unsourced placeholder, for a
+sector where the concept barely applies, would be strictly worse than
+leaving it out.
+
+**The three sources report different objects and need different
+sign/offset transforms** -- getting this wrong is the easiest way to
+silently corrupt every number downstream:
    - Fontagne's `epsilon_icio` is a *negative* trade-cost elasticity
      (`epsilon = -(sigma-1)` is the standard convention), so
      `trade_elast = sigma - 1 = -epsilon_icio`.
    - Ahmad & Schreiber's EOS is *already* a directly-estimated elasticity of
      substitution (`sigma` itself, positive), so `trade_elast = EOS - 1`.
+   - `trade_elast_2008.mat`'s values are already in this project's own
+     `trade_elast` convention (it's the real WIOD data file `io_reorder.py`
+     reads directly) -- used as-is, no transform.
 
-**GTAP -> ICIO mapping judgment calls** (all made explicitly in
+**GTAP/WIOD -> ICIO mapping judgment calls** (all made explicitly in
 `build_combined_trade_elast.py`, not silently): most GTAP services sectors
 match an ICIO code 1:1 (`cns`->`F`, `trd`->`G`, `edu`->`P`, `hht`->`Q`,
 `rsa`->`L`, etc. -- marked `direct`). A few don't split as cleanly, marked
@@ -261,15 +289,19 @@ separate `ins` and `ofi`; `N` uses GTAP's `obs` (its NAICS 561
 admin/support component is the closer match, while `M` is left to
 Fontagne's own direct estimate since NAICS 541 professional services maps
 better there); GTAP's `ros` is duplicated across ICIO's `R` and `S` (a
-weaker match for `S` specifically). See
-`build_combined_trade_elast.py`'s module docstring for the full reasoning
-behind each call -- re-run that script if either upstream source is
-revised.
+weaker match for `S` specifically); WIOD's "Mining and Quarrying" is used
+for both `B05` and `B09`. See `build_combined_trade_elast.py`'s module
+docstring for the full reasoning behind each call -- re-run that script if
+any upstream source is revised.
 
 **Result with broader coverage**: rerunning the Saudi Arabia + UAE
-scenario with all 44 covered sectors (instead of Fontagne's 28 goods-only
-sectors) changes the numbers meaningfully -- `SAU -0.19%`, `ARE +0.12%`,
-`USA -0.006%` log GNE (vs. `-0.43%`/`+0.14%`/`-0.015%` with goods-only
+scenario with 47 of the 48 covered sectors (`B05` still has to be excluded
+for this specific country set regardless of elasticity coverage -- Saudi
+Arabia has zero recorded coal-mining activity at all, a data-completeness
+issue unrelated to whether an elasticity exists for it; see "Two real data
+quirks" above) changes the numbers again -- `SAU -0.20%`, `ARE +0.18%`,
+`USA -0.007%` log GNE (vs. `-0.19%`/`+0.12%`/`-0.006%` with the earlier
+44-sector coverage, and `-0.43%`/`+0.14%`/`-0.015%` with Fontagne's
 coverage) -- a concrete demonstration that sector coverage isn't a detail,
 it changes the answer.
 
@@ -347,7 +379,7 @@ package wrapper is purely additive.
 | `io_reorder(keep_c, data_dir)` | The WIOD-specific loader: WIOD 2008 `.mat` files -> a HAIO dict. |
 | `icio_to_haio(df, countries, sectors, trade_elast, row_label=None, ...)` | An OECD-ICIO loader, verified against a real downloaded file: a plain-CSV-shaped DataFrame -> a HAIO dict. Pass `row_label` (e.g. `'ROW'`) to fold excluded countries in rather than dropping them -- see below. |
 | `load_fontagne_trade_elast(sectors, csv_path=...)` | Loads real Fontagne-Guimbard-Orefice trade elasticities for ICIO (goods, 28 sectors), converted to `nested_ces.py`'s convention -- see its sign-convention caveat below. |
-| `load_combined_trade_elast(sectors, csv_path=..., include_approximate=True)` | Loads Fontagne + Ahmad-Schreiber (2024) combined (goods + services, 44 sectors), with `source`/`mapping_quality` tracked per sector -- see below. |
+| `load_combined_trade_elast(sectors, csv_path=..., include_approximate=True, include_placeholder=True)` | Loads Fontagne + Ahmad-Schreiber (2024) + a WIOD fallback combined (48 of 49 sectors), with `source`/`mapping_quality` tracked per sector -- see below. |
 | `value_added_shares`, `response`, `solve_dlambda_F_all` | The model internals (Allen elasticities, one discretization step's equilibrium response, the linear-system solve). You won't normally call these directly. |
 
 ### `run_scenario()`'s return value

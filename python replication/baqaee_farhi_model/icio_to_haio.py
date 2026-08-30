@@ -150,21 +150,37 @@ def load_fontagne_trade_elast(sectors, csv_path='fontagne_icio_trade_elast.csv')
     return -df.loc[sectors, 'epsilon_icio'].to_numpy(dtype=float)
 
 
-def load_combined_trade_elast(sectors, csv_path='combined_trade_elast.csv', include_approximate=True):
+def load_combined_trade_elast(sectors, csv_path='combined_trade_elast.csv',
+                               include_approximate=True, include_placeholder=True):
     """Load trade_elast from combined_trade_elast.csv (built by
-    build_combined_trade_elast.py) -- goods sectors from Fontagne-Guimbard-Orefice
-    plus services sectors from Ahmad & Schreiber (2024)'s GTAP-level
-    estimates, each already converted to nested_ces.py's convention, with
-    provenance tracked in that file's `source`/`mapping_quality`/`note`
-    columns (see build_combined_trade_elast.py's module docstring for the
-    exact GTAP->ICIO mapping judgment calls this made). Covers 44 of
-    ICIO's 49 non-'T' sectors -- still missing: A02, B05, B09, D, O (no
-    estimate from either source).
+    build_combined_trade_elast.py) -- goods sectors from Fontagne-Guimbard-Orefice,
+    services sectors from Ahmad & Schreiber (2024)'s GTAP-level estimates,
+    and a small WIOD fallback layer from the original paper's own
+    trade_elast_2008.mat for sectors neither of the first two cover, each
+    already converted to nested_ces.py's convention, with provenance
+    tracked in that file's `source`/`mapping_quality`/`note` columns (see
+    build_combined_trade_elast.py's module docstring for the exact mapping
+    judgment calls this made). Covers 48 of ICIO's 49 non-'T' sectors --
+    only `O` (public administration) is still missing, deliberately: it's
+    essentially non-traded by nature, so no estimate is arguably correct,
+    not a gap (see build_combined_trade_elast.py's docstring).
+
+    `mapping_quality` has three tiers, weakest last:
+        'direct'      -- a clean 1:1 sector match.
+        'approximate' -- a many-to-one mapping (GTAP or WIOD bundles
+                          several ICIO sectors into one broader category).
+        'placeholder' -- not a real estimate at all: sector `D`'s value is
+                          the original paper's own flat 5.00 default,
+                          applied uniformly to every WIOD services/utility
+                          sector rather than sourced individually.
 
     include_approximate : if False, raise for any sector whose
-        mapping_quality is 'approximate' (the many-to-one GTAP mappings --
-        K, J61, J62_63, N, R, S) instead of silently including it, for
-        callers who want only the more directly-matched estimates.
+        mapping_quality is 'approximate' instead of silently including it.
+    include_placeholder : if False, raise for any sector whose
+        mapping_quality is 'placeholder' (currently just `D`) instead of
+        silently including it -- separate from include_approximate since
+        'placeholder' is a strictly weaker tier a caller might want to
+        exclude even while accepting 'approximate' mappings.
 
     Raises KeyError for any requested sector missing from the CSV
     entirely -- same reasoning as load_fontagne_trade_elast(): a caller
@@ -178,7 +194,11 @@ def load_combined_trade_elast(sectors, csv_path='combined_trade_elast.csv', incl
     if not include_approximate:
         approx = [s for s in sectors if df.loc[s, 'mapping_quality'] == 'approximate']
         if approx:
-            raise KeyError(f'sectors only have an approximate (many-to-one GTAP) mapping: {approx}')
+            raise KeyError(f'sectors only have an approximate (many-to-one) mapping: {approx}')
+    if not include_placeholder:
+        placeholder = [s for s in sectors if df.loc[s, 'mapping_quality'] == 'placeholder']
+        if placeholder:
+            raise KeyError(f'sectors only have a placeholder (not a real estimate) value: {placeholder}')
     return df.loc[sectors, 'trade_elast'].to_numpy(dtype=float)
 
 
