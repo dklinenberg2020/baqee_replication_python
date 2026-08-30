@@ -61,6 +61,46 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
         The paper's own EU-vs-Russia scenario is
         `shocks=[{'sellers': [RUS], 'buyers': EU, 'sectors': None, 'intensity': 150}]`.
     ngrid : number of discretization steps for the shock.
+    sigma, theta, gamma, epsilon : the model's four nested-CES elasticities
+        of substitution, applied uniformly to every country/sector (not
+        estimated per-sector like `trade_elast`). Defaults are the paper's
+        own calibration, straight from its driver script's own comments
+        (main_dlogW_rev_bigshocks_EU_Russian_v2.m lines 83-86) -- each
+        governs a different tier of the nesting:
+            sigma   (0.9)  : across household Consumption -- substitution
+                             ACROSS SECTORS in what a household buys (food
+                             vs. clothing, say). The WITHIN-a-sector,
+                             across-origin-country dimension (German vs.
+                             French wine) is instead governed by
+                             `trade_elast`+1, per sector -- sigma is only
+                             the cross-sector base rate households fall
+                             back to (see nested_ces.py's sameSector_C).
+            theta   (0.05) : across a producer's Composite Value-added and
+                             Intermediates -- how easily a producer
+                             substitutes its whole VA bundle for its whole
+                             intermediate-input bundle, the top tier of the
+                             producer's own nest.
+            gamma   (0.5)  : across Primary Factors -- substitution within
+                             the value-added bundle itself, across factor
+                             types; irrelevant in the single-factor-per-
+                             producer path this codebase uses
+                             (factor_index==2, see main_load_data.py) since
+                             there is nothing to substitute across when a
+                             producer buys from only one factor, but kept
+                             as a parameter for a future factor_index==1
+                             caller.
+            epsilon (0.05) : across a producer's Intermediate Inputs --
+                             the producer-side analogue of sigma: cross-
+                             SECTOR substitution in what a producer buys as
+                             inputs (steel vs. plastic), with the within-
+                             sector-across-origin-country dimension again
+                             handled separately by `trade_elast`+1.
+        All four are unrelated to `trade_elast` (a per-sector Armington
+        elasticity from real data, see icio_to_haio.py/io_reorder.py) --
+        these four are structural CES parameters the paper calibrates once
+        and holds fixed across every sector and country, while `trade_elast`
+        varies by sector and is the only one of the five actually estimated
+        from data.
 
     Returns
     -------

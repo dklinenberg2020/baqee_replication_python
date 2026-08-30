@@ -391,7 +391,7 @@ package wrapper is purely additive.
 
 | Function | What it does |
 |---|---|
-| `run_scenario(keep_c, countries, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05, data_dir=None, haio=None)` | The one you want. Runs the model and returns a labeled, self-describing result. |
+| `run_scenario(keep_c, countries, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05, data_dir=None, haio=None)` | The one you want. Runs the model and returns a labeled, self-describing result. `sigma`/`theta`/`gamma`/`epsilon` are the model's four structural nested-CES elasticities (defaults = the paper's own calibration) -- see `run()`'s docstring in `run_model.py` for exactly which substitution margin each one governs; they're unrelated to `trade_elast`, which is the one per-sector elasticity actually estimated from data. |
 | `run(keep_c, shocks, ngrid=20, ..., haio=None)` | Lower-level: same computation, returns a raw `(C,)` numpy array instead of a labeled dict. |
 | `main_load_data(haio, initial_tariff_index, factor_index)` | Source-agnostic: turns a standardized HAIO dict into the model's standard-form inputs. Normally called for you by `run()`. |
 | `io_reorder(keep_c, data_dir)` | The WIOD-specific loader: WIOD 2008 `.mat` files -> a HAIO dict. |
