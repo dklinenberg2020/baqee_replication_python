@@ -86,34 +86,51 @@ def value_added_shares(data):
     beta_s_safe = np.where(beta_s == 0, 1, beta_s)  # (C, N)
     sameSector_C = (trade_elast[None, :] + 1) / beta_s_safe + sigma * (1 - 1 / beta_s_safe)  # (C, N)
 
+    # sector_of_col/te_col are pure functions of C, N and trade_elast (never
+    # x, never even the shock) -- corr_N/corr_C likewise depend only on
+    # step-constant data (Omega_total_N/Omega_total_C, trade_elast), not on
+    # the probe direction. All four used to be recomputed by _diag_term (or
+    # inline via np.tile) on every one of the ~C+CF probe calls per outer
+    # discretization step -- profiling on the real ICIO scale showed this
+    # was the dominant cost of solve_dlambda_F_all's probing loop (see
+    # nested_ces.py's module docstring). Computed once per step here
+    # instead, and reused unchanged across every probe.
+    sector_of_col = np.tile(np.arange(data['N']), data['C'])
+    te_col = trade_elast[sector_of_col][None, :]
+    corr_N = _diag_corr(data['Omega_total_N'][:, :data['CN']], te_col)
+    corr_C = _diag_corr(data['Omega_total_C'], te_col)
+
     return dict(base_kc=base_kc, one_minus_alpha=one_minus_alpha,
-                sameSector_minus_base=sameSector_minus_base, sameSector_C=sameSector_C)
+                sameSector_minus_base=sameSector_minus_base, sameSector_C=sameSector_C,
+                sector_of_col=sector_of_col, corr_N=corr_N, corr_C=corr_C)
 
 
-def _diag_term(Om_denom, Om_weight, dlogP, trade_elast_of_col):
-    """(AES_diag(row,col) - AES_sameSector(row,col)) * Om_weight(row,col) * dlogP(row,col).
-    AES_diag and AES_sameSector are identical except for AES_diag's extra
-    -(trade_elast+1)/Om_denom(row,col) term (every other term is shared and
-    cancels exactly), so the difference is just -(trade_elast+1)/Om_denom,
-    guarded against 0/0 where Om_denom(row,col) == 0 -- there the whole term
-    is exactly zero, matching AES_func.m's explicit `if Om==0, AES=1` branch
-    (which only ever gets multiplied by that same Om==0 term).
+def _diag_corr(Om_denom, trade_elast_of_col):
+    """The (row,col)-varying part of _diag_term's AES_diag-minus-AES_sameSector
+    correction: AES_diag and AES_sameSector are identical except for
+    AES_diag's extra -(trade_elast+1)/Om_denom(row,col) term (every other
+    term is shared and cancels exactly), guarded against 0/0 where
+    Om_denom(row,col) == 0 -- there the whole term is exactly zero, matching
+    AES_func.m's explicit `if Om==0, AES=1` branch (which only ever gets
+    multiplied by that same Om==0 term).
 
     Om_denom (Omega_total_N / Omega_total_C, the AES formula's own
-    denominator per AES_func.m) and Om_weight (the weight actually
-    multiplying (AES-1) in the sum, which Nested_CES_linear_result_final.m
-    always takes from Omega_total_tilde) are the SAME array initially, but
-    diverge after the outer discretization loop's first iteration: the two
-    are updated by different, non-interchangeable formulas -- see
-    run_model.py's "Update variables" block and AES_func.m vs.
-    Nested_CES_linear_result_final.m's choice of which Omega_total_* they
-    read. Both share the same zero/nonzero support throughout (a cell that
-    starts at exactly zero has an exactly-zero update in both, by induction
-    -- see nested_ces.py's module docstring), so the 0/0 guard is safe to
-    base on either; only the nonzero *values* must come from the right one."""
+    denominator per AES_func.m) is a step constant -- fixed for the whole
+    outer discretization step's probing loop, updated only between steps
+    (run_model.py's "Update variables" block) -- so this is computed once
+    per step by value_added_shares(), not once per probe."""
     nz = Om_denom != 0
     Om_safe = np.where(nz, Om_denom, 1.0)
-    corr = np.where(nz, -(trade_elast_of_col + 1) / Om_safe, 0.0)
+    return np.where(nz, -(trade_elast_of_col + 1) / Om_safe, 0.0)
+
+
+def _diag_term(corr, Om_weight, dlogP):
+    """(AES_diag(row,col) - AES_sameSector(row,col)) * Om_weight(row,col) * dlogP(row,col),
+    given a precomputed `corr` from _diag_corr() (see its docstring for the
+    derivation and why it's precomputed once per step rather than here).
+    Om_weight (the weight actually multiplying (AES-1) in the sum, which
+    Nested_CES_linear_result_final.m always takes from Omega_total_tilde)
+    and dlogP are the only genuinely per-probe-varying inputs."""
     return corr * Om_weight * dlogP
 
 
@@ -134,25 +151,25 @@ def producer_dOmega_goods(data, blocks, Og, Pg, own_factor_Om_weight, own_factor
     own_factor_Om_weight(kc)*(theta-1)*dlogP_own_factor(kc)."""
     C, N, CN = data['C'], data['N'], data['CN']
     theta = data['theta']
-    trade_elast = data['trade_elast']
-    Omega_total_N = data['Omega_total_N']
     base_kc = blocks['base_kc']
     sameSector_minus_base = blocks['sameSector_minus_base']
+    sector_of_col = blocks['sector_of_col']  # sector(i), i=0..CN-1 -- step constant
+    corr_N = blocks['corr_N']  # step constant, see _diag_corr()'s docstring
 
     w = Og * Pg
     S = w.sum(axis=1)  # (CN,): goods-only weighted price sum
     S_sector = w.reshape(CN, C, N).sum(axis=1)  # (CN, N)
 
-    sector_of_col = np.tile(np.arange(N), C)  # sector(i), i=0..CN-1
     own_factor_term = own_factor_Om_weight * (theta - 1) * own_factor_P
     default_term = (base_kc - 1) * S + own_factor_term
     sector_term = (sameSector_minus_base * S_sector)[:, sector_of_col]
 
-    Om_denom = Omega_total_N[:, :CN]
-    te_col = trade_elast[sector_of_col][None, :]
-    diag = _diag_term(Om_denom, Og, Pg, te_col)  # one power of Og (=Om_weight)
+    diag = _diag_term(corr_N, Og, Pg)  # one power of Og (=Om_weight)
 
-    return Og * Pg + Og * (default_term[:, None] + sector_term) + Og * diag, S  # outer Og gives the second power
+    # `w` (== Og*Pg, computed above for S/S_sector) is reused here instead of
+    # recomputing Og*Pg a second time -- previously duplicated work on every
+    # probe call.
+    return w + Og * (default_term[:, None] + sector_term) + Og * diag, S  # outer Og gives the second power
 
 
 def producer_dOmega_own_factor(data, S, own_factor_Om_denom, own_factor_Om_weight, own_factor_P):
@@ -194,22 +211,21 @@ def consumer_dOmega(data, blocks, Og, Pg):
     producer_dOmega_goods but using AES_C_Mat (sigma-based)."""
     C, N = data['C'], data['N']
     sigma = data['sigma']
-    trade_elast = data['trade_elast']
-    Omega_total_C = data['Omega_total_C']
     sameSector_C = blocks['sameSector_C']
+    sector_of_col = blocks['sector_of_col']  # step constant
+    corr_C = blocks['corr_C']  # step constant, see _diag_corr()'s docstring
 
     w = Og * Pg
     S = w.sum(axis=1)  # (C,)
     S_sector = w.reshape(C, C, N).sum(axis=1)  # (C, N)
 
-    sector_of_col = np.tile(np.arange(N), C)
     default_term = (sigma - 1) * S
     sector_term = ((sameSector_C - sigma) * S_sector)[:, sector_of_col]
 
-    te_col = trade_elast[sector_of_col][None, :]
-    diag = _diag_term(Omega_total_C, Og, Pg, te_col)
+    diag = _diag_term(corr_C, Og, Pg)
 
-    return Og * Pg + Og * (default_term[:, None] + sector_term) + Og * diag
+    # `w` reused instead of recomputing Og*Pg a second time.
+    return w + Og * (default_term[:, None] + sector_term) + Og * diag
 
 
 def response(x, data, shock, blocks):
@@ -238,7 +254,13 @@ def response(x, data, shock, blocks):
     # divide as zero rather than NaN: the alternative propagates NaN through
     # every country's dlogP_CN below via the dense Psi_total matmul.
     dlogP_F = np.divide(dlambda_F, lambda_F, out=np.zeros_like(dlambda_F), where=lambda_F != 0)
-    dlogP_CN = Psi_total[:C + CN, :C + CN] @ dX + Psi_total[:C + CN, C + CN:] @ dlogP_F  # (C+CN,)
+    # Psi_total[:C+CN,:C+CN] @ dX does not depend on x (dX comes from shock,
+    # fixed for the whole probing loop within one outer step) -- cached in
+    # `blocks` (a fresh dict every outer step, see run_model.py) instead of
+    # recomputed identically on every one of the ~C+CF probe calls.
+    if '_dlogP_CN_const' not in blocks:
+        blocks['_dlogP_CN_const'] = Psi_total[:C + CN, :C + CN] @ dX
+    dlogP_CN = blocks['_dlogP_CN_const'] + Psi_total[:C + CN, C + CN:] @ dlogP_F  # (C+CN,)
     dlogP_Vec = np.concatenate([dlogP_CN, dlogP_F])
 
     dlogP_goods = dlogP_CN[C:]  # seller's own price, seller j -> position C+j in dlogP_CN
