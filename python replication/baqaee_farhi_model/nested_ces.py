@@ -66,11 +66,22 @@ def value_added_shares(data):
     trade_elast = data['trade_elast']
 
     one_minus_alpha = 1 - alpha
-    base_kc = epsilon / one_minus_alpha + theta * (1 - 1 / one_minus_alpha)  # (CN,)
+    # alpha==1.0 (all value-added, zero measured intermediate cost) is not
+    # only sector T -- any real producer with no measured intermediate
+    # purchases hits it too (ICIO's finer sector grid makes this more likely
+    # than WIOD's). Guard the same way Omega_s_safe/beta_s_safe below
+    # already guard their own zero-denominator case: a producer with
+    # one_minus_alpha==0 has zero weight everywhere this feeds into
+    # (Omega_total_N's off-diagonal terms are separately scaled by
+    # (1-alpha)==0), so the filler value used here for the division itself
+    # is inert -- it only exists to avoid inf/NaN poisoning the matmuls
+    # downstream via Psi_total, exactly like the lambda_F fix in response().
+    one_minus_alpha_safe = np.where(one_minus_alpha == 0, 1, one_minus_alpha)
+    base_kc = epsilon / one_minus_alpha_safe + theta * (1 - 1 / one_minus_alpha_safe)  # (CN,)
 
     Omega_s_safe = np.where(Omega_s == 0, 1, Omega_s)  # (CN, N)
     sameSector_minus_base = ((trade_elast[None, :] + 1 - epsilon)
-                              / (one_minus_alpha[:, None] * Omega_s_safe))  # (CN, N)
+                              / (one_minus_alpha_safe[:, None] * Omega_s_safe))  # (CN, N)
 
     beta_s_safe = np.where(beta_s == 0, 1, beta_s)  # (C, N)
     sameSector_C = (trade_elast[None, :] + 1) / beta_s_safe + sigma * (1 - 1 / beta_s_safe)  # (C, N)

@@ -261,6 +261,16 @@ def icio_to_haio(df, countries, sectors, trade_elast, alpha_VA=None,
 
     VA = df.loc[va_label, cs_labels].to_numpy(dtype=float)  # (CN,) -- ONE row, not one per country
 
+    # A handful of real cells in OECD ICIO are negative (e.g. inventory
+    # drawdown in a final-demand category, or negative value added at basic
+    # prices for a small country-sector like CYP's air transport) -- clamp
+    # to 0 here, matching io_reorder.py's identical WIOD handling
+    # (`IO[IO < 0] = 0`, `VA = np.maximum(VA, 0)`), so a negative flow can't
+    # produce a negative Omega/beta/alpha share downstream.
+    IO = np.maximum(IO, 0)
+    FD = np.maximum(FD, 0)
+    VA = np.maximum(VA, 0)
+
     row_sums = IO.sum(axis=1, keepdims=True)
     Omega = np.divide(IO, row_sums, out=np.zeros_like(IO), where=row_sums != 0)
 

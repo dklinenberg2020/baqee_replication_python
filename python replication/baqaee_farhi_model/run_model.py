@@ -74,6 +74,13 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
     data, shock = main_load_data(haio, 1, 2)
     C, N, CN, CF = data['C'], data['N'], data['CN'], data['CF']
     data['sigma'], data['theta'], data['gamma'], data['epsilon'] = sigma, theta, gamma, epsilon
+    # Pre-shock GNE weights, for a GNE-weighted world aggregate. Must be
+    # captured here, before the loop below starts mutating data['chi_std']
+    # step by step -- matching main_dlogW_rev_bigshocks_EU_Russian_v2.m's own
+    # GNE_weights (captured once, before its loop), not silently drifting
+    # into a post-shock weighting the way reading data['chi_std'] after the
+    # loop would.
+    data['GNE_weights_initial'] = data['chi_std'][:C].copy()
 
     F = data['F']
     Phi_F = np.zeros((C, CF))
@@ -100,10 +107,10 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
         for sellers, buyers, sectors, intensity_grid in legs:
             for s in sellers:
                 cols = s * N + sectors  # this seller's shocked-sector columns
-                dlogtau[np.ix_(buyers, cols)] = intensity_grid  # buyers' households
+                dlogtau[np.ix_(buyers, cols)] += intensity_grid  # buyers' households
                 for b in buyers:
                     rows = C + b * N + np.arange(N)  # buyer b's producers, all its own sectors
-                    dlogtau[np.ix_(rows, cols)] = intensity_grid
+                    dlogtau[np.ix_(rows, cols)] += intensity_grid
         dX = (data['Omega_total_tilde'][:C + CN, C:] * (dlogt + dlogtau)).sum(axis=1)
         shock = dict(dlogt=dlogt, dlogtau=dlogtau, dX=dX)
 
@@ -144,7 +151,11 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
 
         dbeta_temp = dOmega_total_tilde[:C, C:C + CN]
         dOmega_temp = dOmega_total_tilde[C:C + CN, C:]
-        dOmega_temp2 = dOmega_total_tilde[C:C + CN, C:C + CN] * (1 / (1 - data['alpha']))[:, None]
+        # Same alpha==1.0 edge case guarded in nested_ces.py's
+        # value_added_shares(): a producer with zero measured intermediate
+        # cost has an all-zero row here anyway, so the filler value is inert.
+        one_minus_alpha_safe = np.where(data['alpha'] == 1, 1, 1 - data['alpha'])
+        dOmega_temp2 = dOmega_total_tilde[C:C + CN, C:C + CN] * (1 / one_minus_alpha_safe)[:, None]
         dbeta_s = np.zeros((C, N))
         dOmega_s = np.zeros((CN, N))
         for c in range(C):
@@ -180,8 +191,7 @@ def run_scenario(keep_c, countries, shocks, ngrid=20,
     dlogW_sum, data = run(keep_c, shocks, ngrid=ngrid,
                            sigma=sigma, theta=theta, gamma=gamma, epsilon=epsilon,
                            data_dir=data_dir, haio=haio)
-    GNE_weights = data['chi_std'][:data['C']]
-    world = GNE_weights @ dlogW_sum
+    world = data['GNE_weights_initial'] @ dlogW_sum
     return dict(
         dlogW=dict(zip(countries, dlogW_sum)),
         World=world,
