@@ -120,8 +120,12 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
 
         # Only the household (0..C-1) block of chi_std is ever nonzero, so
         # only it is needed here; avoid a spurious divide-by-zero warning
-        # from the (always-zero) producer/factor block.
-        dlogW[:, i] = dchi_std[:C] / data['chi_std'][:C] - dlogP_Vec[:C]
+        # from the (always-zero) producer/factor block. The divide below is
+        # itself still guarded (not just sliced to :C) in case some tracked
+        # "country" genuinely has zero GNE weight (e.g. an empty ROW
+        # composite for a `countries` list that already covers everyone).
+        chi_std_C = data['chi_std'][:C]
+        dlogW[:, i] = np.divide(dchi_std[:C], chi_std_C, out=np.zeros(C), where=chi_std_C != 0) - dlogP_Vec[:C]
 
         # --- Update Omega_total_tilde and all quantities derived from it,
         # mirroring the MATLAB "Update variables" block -----------------

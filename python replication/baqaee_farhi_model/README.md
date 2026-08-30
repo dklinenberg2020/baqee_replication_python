@@ -24,19 +24,22 @@ it (see "Using a non-WIOD dataset" below):
 
 ```
                        io_reorder.py   ---\
-DATA (.mat / .csv)                          --->  main_load_data.py  --->  nested_ces.py  --->  run_model.py  --->  run_paper_scenario.py
+DATA (.mat / .csv)                          --->  main_load_data.py  --->  nested_ces.py  --->  run_model.py  --->  run_paper_scenario.py / run_paper_scenario_icio.py
                        icio_to_haio.py ---/
-                       (or your own loader)
+                       (or your own loader)              ^
+                       build_combined_trade_elast.py -----+ (trade_elast for icio_to_haio.py)
 ```
 
 | File | Role |
 |---|---|
 | `io_reorder.py` | WIOD `.mat` files -> HAIO dict |
 | `icio_to_haio.py` | OECD ICIO CSV -> HAIO dict |
+| `build_combined_trade_elast.py` | builds `combined_trade_elast.csv` (the trade elasticities `icio_to_haio.py` needs, ICIO has none of its own) |
 | `main_load_data.py` | HAIO dict -> the model's standard-form inputs (source-agnostic) |
 | `nested_ces.py` | the model itself: Allen elasticities, one discretization step's equilibrium response, the linear-system solve |
 | `run_model.py` | the outer discretization loop (`run()`) and the labeled convenience wrapper (`run_scenario()`) |
-| `run_paper_scenario.py` | a ready-to-run driver with the paper's exact settings (all 41 WIOD countries, EU-vs-Russia) |
+| `run_paper_scenario.py` | a ready-to-run driver with the paper's exact settings on WIOD 2008 (all 41 WIOD countries, EU-vs-Russia) |
+| `run_paper_scenario_icio.py` | the same EU-vs-Russia scenario, rebuilt on real OECD ICIO 2022 data + `combined_trade_elast.csv` instead of WIOD -- see "Running the paper scenario on ICIO instead of WIOD" below. Much slower: expect hours, not minutes (see that section). |
 | `__init__.py` | makes this directory importable as a package from anywhere (see below) |
 
 ## Installing / importing this as a standalone package
@@ -135,7 +138,7 @@ from run_model import run_scenario
 df = pd.read_csv('2022_SML.csv', index_col=0)   # not committed -- see "Getting the real data" below
 countries = ['SAU', 'ARE', 'USA', 'ROW']
 fontagne = pd.read_csv('fontagne_icio_trade_elast.csv', index_col='icio2025')
-sectors = [s for s in fontagne[fontagne['epsilon_icio'].notna()].index if s not in ('T', 'B05')]
+sectors = [s for s in fontagne[fontagne['epsilon_icio'].notna()].index if s != 'T']
 trade_elast = load_fontagne_trade_elast(sectors)   # see its SIGN CONVENTION CAVEAT below
 
 haio = icio_to_haio(df, countries, sectors, trade_elast, row_label='ROW')
@@ -186,27 +189,36 @@ their own rows among Gulf states; everything else Gulf-related is inside
 back-of-envelope work earlier in this project) can't isolate Iran's own
 export collapse with ICIO alone.
 
-**Two real data quirks the small test above had to route around** (both
-inherent to the data, not bugs, and much less likely to bite at full scale
-with all 81 countries tracked):
-1. **Always exclude sector `T`** ("activities of households as employers...
-   for own use") when using ICIO with this model. It is *always* 100%
-   value-added with zero measured intermediate cost, by national-accounts
-   convention, for every country -- not a data gap, just how this category
-   is defined -- and that divides by zero in `nested_ces.py`'s AES formulas
-   (`epsilon/(1-alpha)` with `alpha=1`) regardless of data source. It's a
-   negligible share of GNE everywhere and irrelevant to anything this
-   project models (trade, energy, tariffs), so there's no real cost to
-   dropping it: `sectors = [s for s in ALL_ICIO_SECTORS if s != 'T']`.
+**Real data quirks in ICIO** (all inherent to the data, not bugs):
+1. **Still exclude sector `T`** ("activities of households as employers...
+   for own use") when using ICIO with this model -- not because it crashes
+   anymore (the `alpha==1.0` divide it triggers in `nested_ces.py`'s AES
+   formulas is now guarded, same fix as item 2 below), but because it's a
+   national-accounts imputation with no real trade behavior (always 100%
+   value-added, zero measured intermediate cost, for every country) and a
+   negligible share of GNE everywhere -- excluding it costs nothing and
+   keeps the sector list to economically meaningful categories:
+   `sectors = [s for s in ALL_ICIO_SECTORS if s != 'T']`.
 2. **A country can have literally zero recorded activity in a niche
-   sector** (Saudi Arabia has no coal mining, `B05`) -- ICIO's 50-sector
-   classification is finer than WIOD's 30, so this shows up more than it
-   would have with WIOD. A producer with zero output makes its equation in
-   the linear solve degenerate (`LinAlgError: Singular matrix`). This is
-   rare to nonexistent once every excluded country is aggregated into
-   `ROW` (summing 77 countries into one composite makes an all-zero sector
-   implausible), but can bite in a small, hand-picked `countries` subset
-   like the test above.
+   sector** (Saudi Arabia has no coal mining, `B05`; Luxembourg has no
+   mining or oil extraction at all) -- ICIO's 50-sector classification is
+   finer than WIOD's 30, so this shows up more than it would have with
+   WIOD, and gets more common, not less, as more countries are tracked
+   individually (a 41-country run hits ~20 such cases). This used to
+   produce a `LinAlgError: Singular matrix` (a very small `countries`
+   subset) or silent NaN in every country's result (a larger one, via a
+   `dlambda_F / lambda_F` divide-by-zero in `nested_ces.py` that NaN-poisons
+   the shared Leontief inverse) -- both are now fixed by guarding every
+   divide-by-a-zero-share in `nested_ces.py`/`run_model.py` to return 0
+   instead. A zero-output producer genuinely has nothing to say about its
+   own price in this linearization, so treating it as contributing zero is
+   the correct fix, not a workaround -- no sector needs to be excluded for
+   this reason anymore, at any `countries` size.
+3. **A handful of real cells are negative** -- a small country's value
+   added at basic prices in a niche sector (e.g. Cyprus, air transport),
+   or inventory drawdown in final demand. `icio_to_haio.py` clamps these to
+   0 before computing shares, exactly like `io_reorder.py` already does for
+   WIOD -- otherwise a share (`alpha`, `beta`) could come out negative.
 
 **`row_label`, added after finding a real numerical failure mode**: the
 first version of this loader simply *dropped* any country not in
@@ -298,11 +310,9 @@ docstring for the full reasoning behind each call -- re-run that script if
 any upstream source is revised.
 
 **Result with broader coverage**: rerunning the Saudi Arabia + UAE
-scenario with 47 of the 48 covered sectors (`B05` still has to be excluded
-for this specific country set regardless of elasticity coverage -- Saudi
-Arabia has zero recorded coal-mining activity at all, a data-completeness
-issue unrelated to whether an elasticity exists for it; see "Two real data
-quirks" above) changes the numbers again -- `SAU -0.20%`, `ARE +0.18%`,
+scenario with all 48 covered sectors (`B05` no longer needs excluding for
+Saudi Arabia's zero coal-mining activity -- see "Real data quirks in ICIO"
+above) changes the numbers again -- `SAU -0.201%`, `ARE +0.179%`,
 `USA -0.007%` log GNE (vs. `-0.19%`/`+0.12%`/`-0.006%` with the earlier
 44-sector coverage, and `-0.43%`/`+0.14%`/`-0.015%` with Fontagne's
 coverage) -- a concrete demonstration that sector coverage isn't a detail,
@@ -314,8 +324,11 @@ behind a Cloudflare bot challenge on `www.oecd.org` that no plain HTTP
 client can pass -- unlike the documentation PDFs, which OECD happens to also
 serve unprotected from `stats.oecd.org`. Download it manually in a browser,
 unzip to get one CSV per year, and drop the year(s) you want into this
-directory -- `.gitignore`d (`baqaee_farhi_model/*.csv`) since a single
-year's file is far too large for a normal GitHub push.
+directory -- `.gitignore`d (via the year-prefixed pattern
+`baqaee_farhi_model/[0-9][0-9][0-9][0-9]*.csv`, e.g. `2022_SML.csv`, which
+deliberately does *not* match the small committed elasticity CSVs like
+`combined_trade_elast.csv`) since a single year's file is far too large for
+a normal GitHub push.
 
 Running `python icio_to_haio.py` prints a small **synthetic** (not real
 data) 2-country x 2-sector example showing exactly what "the standard data
@@ -457,6 +470,35 @@ iterating on scenario design, use a small `keep_c` subset and a low `ngrid`
 (3-5) -- see the example above -- and only scale up to the full run for
 final numbers.
 
+## Running the paper scenario on ICIO instead of WIOD
+
+`run_paper_scenario_icio.py` recreates the same EU-vs-Russia iceberg-cost
+scenario as `run_paper_scenario.py`, but built entirely on real OECD ICIO
+2022 data (`icio_to_haio.py`) and `combined_trade_elast.csv` instead of
+WIOD 2008 and `trade_elast_2008.mat` -- same 40 individually-tracked
+countries (mapped to their ICIO codes) plus a `ROW` composite, same EU
+member list, same `ngrid=20`/`intensity=150` defaults, but all 48
+non-`T`/non-`O` ICIO sectors instead of WIOD's 30.
+
+This is **much slower** than the WIOD run: ICIO's 48-sector classification
+makes the linear system roughly 1.6x larger per country (`C*N` grows from
+1230 to 1968), and since the per-step solve cost scales with the cube of
+the system size, expect **hours, not minutes**, at the default `ngrid=20`
+-- run it in the background. It is also a materially different exercise,
+not a like-for-like regression check against the WIOD numbers: different
+base year (2022 vs. 2008), different sector classification, and
+elasticities from three combined literature sources instead of the paper's
+own (mostly-placeholder) `trade_elast_2008.mat` -- expect the magnitude to
+differ from `run_paper_scenario.py`'s output for these reasons, not because
+either run is wrong.
+
+Since this script's sector set includes most of the goods sectors
+`load_combined_trade_elast()` sources from Fontagné-Guimbard-Orefice, the
+sign-convention caveat on that source (see "Getting `trade_elast`" above --
+`trade_elast = -epsilon_icio` is a plausible but not independently verified
+derivation) applies to roughly half of the 48 sectors this script uses, not
+just to an isolated illustrative case.
+
 ## Data included
 
 Three WIOD 2013-release, benchmark-year-2008 files -- everything `io_reorder.py`
@@ -466,13 +508,18 @@ full data provenance). The original MATLAB replication package
 files (`WIOD_SEA_14.mat`, `ahs_all.mat`, `wiot2008_row_apr12.mat`) used only
 by `IO_reorder_init_tariff.m`, the "with initial tariffs" variant that was
 never ported (the paper's own driver script doesn't use it either) -- those
-are intentionally not duplicated here.
+are intentionally not duplicated here. Plus two small committed CSVs
+`icio_to_haio.py` reads (real OECD ICIO files themselves, like
+`2022_SML.csv`, are `.gitignore`d -- see "Getting the real data into your
+own copy" above -- and must be downloaded separately).
 
 | File | Contents |
 |---|---|
 | `wiott2008.mat` | World Input-Output Table: the 41-country x 31-industry bilateral flow matrix |
 | `wiodsea2008.mat` | Socio-Economic Accounts: labor/capital compensation by country-industry |
 | `trade_elast_2008.mat` | Industry-level cross-country (Armington-style) trade elasticities |
+| `fontagne_icio_trade_elast.csv` | Raw Fontagné-Guimbard-Orefice ICIO-classification trade elasticities (28 usable sectors, goods only) |
+| `combined_trade_elast.csv` | Fontagné + Ahmad-Schreiber (2024) + WIOD-fallback trade elasticities combined (48 of 49 non-`T` sectors), built by `build_combined_trade_elast.py` |
 
 ## Validation
 

@@ -261,14 +261,15 @@ def io_reorder(keep_c, data_dir='.'):
     trade_elast = np.concatenate([trade_elast_2008[:8], trade_elast_2008[9:]])
 
     # WIOD SEA's medium-skill/high-skill columns are in the opposite order
-    # from what main_load_data.py's standard-form construction expects --
-    # this is a WIOD-specific data-semantics fix, not a generic model step,
-    # so it belongs here (in the WIOD-specific loader) rather than in the
-    # source-agnostic main_load_data(). A different source's own loader is
-    # responsible for handing its own alpha_VA columns to main_load_data()
-    # in whatever order that source's own factor categories are meant to be
-    # used in -- there is no universal "correct" factor-column order beyond
-    # whatever the source loader itself defines.
+    # from the convention this loader otherwise uses for factor categories.
+    # NOTE: main_load_data.py only ever reads alpha_VA's actual values when
+    # called with factor_index==1; run_model.py's run() hardcodes
+    # factor_index=2 ("country-sector-specific labor, one factor per
+    # producer" -- what the paper's own driver script uses), so alpha_VA is
+    # computed and cleaned but never actually read on that path. This swap
+    # therefore currently has no effect on any output this package produces
+    # -- kept for whenever factor_index==1 (skill-specific, economy-wide
+    # mobile factors) is exercised instead.
     alpha_VA = alpha_VA.copy()
     alpha_VA[:, [2, 3]] = alpha_VA[:, [3, 2]]
 

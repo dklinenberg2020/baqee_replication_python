@@ -26,7 +26,8 @@ import time
 from run_model import run_scenario
 
 # WIOD 2008 country order used throughout the replication package (see
-# main_dlogW_rev_bigshocks_EU_Russian_v2.m); ROW is appended as the 42nd.
+# main_dlogW_rev_bigshocks_EU_Russian_v2.m); ROW is appended as the 41st
+# (40 named WIOD countries + ROW).
 COUNTRIES = ['AUS', 'AUT', 'BEL', 'BGR', 'BRA', 'CAN', 'CHN', 'CYP', 'CZE', 'DEU', 'DNK', 'ESP',
              'EST', 'FIN', 'FRA', 'GBR', 'GRC', 'HUN', 'IDN', 'IND', 'IRL', 'ITA', 'JPN', 'KOR',
              'LTU', 'LUX', 'LVA', 'MEX', 'MLT', 'NLD', 'POL', 'PRT', 'ROU', 'RUS', 'SVK', 'SVN',

@@ -45,7 +45,7 @@
     "elapsed_seconds": 1209.833482503891,
     "ngrid": 20,
     "intensity": 150,
-    "scenario": "EU iceberg trade cost on Russia, all 41 WIOD 2008 countries + ROW, factor_index=2, initial_tariff_index=1",
+    "scenario": "EU iceberg trade cost on Russia, all 40 named WIOD 2008 countries + ROW (41 total), factor_index=2, initial_tariff_index=1",
     "comparison": "Paper Table 2 col (2) Simulation: Germany GNE loss 0.2-0.3% (this run: -0.257%)"
   }
 }

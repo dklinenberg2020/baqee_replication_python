@@ -36,7 +36,16 @@ WIOD's 30 or a different factor-category count than WIOD SEA's 4.
                             factor categories the source provides (WIOD: 4
                             labor/capital categories via WIOD SEA). A source
                             with no factor breakdown at all can pass a
-                            single all-ones column (F_data = 1).
+                            single all-ones column (F_data = 1). NOTE: only
+                            read when this function is called with
+                            factor_index==1 (economy-wide mobile
+                            skill-specific factors); run_model.py's run()
+                            always calls with factor_index==2
+                            (country-sector-specific factors, one per
+                            producer -- what the paper's own driver script
+                            uses), under which alpha_VA's actual values are
+                            never used at all, only its shape (to infer
+                            F_data, unused downstream in that path too).
     haio['trade_elast']  : (N,) array, cross-country trade elasticity by
                             sector (matches AES_func.m's own +1 convention,
                             see nested_ces.py).
