@@ -219,7 +219,14 @@ def response(x, data, shock, blocks):
     dlambda_F = x[:CF]
     dlambda_F_star = x[CF:]
 
-    dlogP_F = dlambda_F / lambda_F
+    # A producer/factor with exactly zero baseline income (real for some
+    # ICIO country-sector pairs at fine sector resolution, e.g. Luxembourg's
+    # zero mining/oil output -- never arose in WIOD's coarser 30 sectors) has
+    # dlambda_F == lambda_F == 0 here (its share of a shrinking/growing
+    # world total starts and stays at 0 in this linearization). Guard the
+    # divide as zero rather than NaN: the alternative propagates NaN through
+    # every country's dlogP_CN below via the dense Psi_total matmul.
+    dlogP_F = np.divide(dlambda_F, lambda_F, out=np.zeros_like(dlambda_F), where=lambda_F != 0)
     dlogP_CN = Psi_total[:C + CN, :C + CN] @ dX + Psi_total[:C + CN, C + CN:] @ dlogP_F  # (C+CN,)
     dlogP_Vec = np.concatenate([dlogP_CN, dlogP_F])
 
