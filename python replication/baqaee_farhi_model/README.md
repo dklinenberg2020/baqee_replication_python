@@ -472,6 +472,33 @@ iterating on scenario design, use a small `keep_c` subset and a low `ngrid`
 (3-5) -- see the example above -- and only scale up to the full run for
 final numbers.
 
+### Potential future improvement: parallelize the probing loop
+
+`solve_dlambda_F_all()` (`nested_ces.py`) builds the model's Jacobian by
+calling `response()` once per unit vector -- `C+CF` times per outer
+discretization step (~1272 for the WIOD scale above, ~2009 for the ICIO
+scale in the next section) -- deliberately, to avoid hand-deriving the
+Jacobian analytically (see that function's and the module's docstrings for
+why). Every one of those calls is independent given the same fixed
+`data`/`shock`/`blocks` for that step, so the loop is embarrassingly
+parallel across probes; right now it runs single-threaded in a plain
+Python `for` loop, which profiling identified as the dominant cost by far
+(far more than the once-per-step linear solve itself).
+
+Not yet implemented, but the natural approach: a **persistent
+`multiprocessing.Pool`**, created once and reused across all `ngrid`
+outer steps (not respawned per step), with the fixed per-step arrays
+(`Omega_total_tilde`, `Psi_total` -- ~126MB each at the ICIO scale) placed
+in shared memory rather than re-pickled to every worker on every step, and
+each worker setting `OMP_NUM_THREADS=1`/`OPENBLAS_NUM_THREADS=1` so its own
+BLAS calls don't oversubscribe on top of the process-level parallelism.
+This scales with the number of physical cores available -- a big win on a
+16-64 core machine (potentially turning multi-hour ICIO runs into tens of
+minutes), a much smaller one on a 4-core box -- at the cost of real added
+complexity (shared-memory setup, per-step IPC, one more thing to verify
+for correctness against the existing single-threaded output) in a codebase
+that has otherwise leaned hard on staying simple and validated.
+
 ## Running the paper scenario on ICIO instead of WIOD
 
 `run_paper_scenario_icio.py` recreates the same EU-vs-Russia iceberg-cost
