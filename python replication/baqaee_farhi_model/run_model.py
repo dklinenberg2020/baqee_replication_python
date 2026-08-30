@@ -47,10 +47,12 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
             'buyers'    : positions of the buyer country/countries facing
                           the higher cost, or None for all countries
                           (default: None).
-            'sectors'   : 0-indexed WIOD sector indices (0..N-1, N=30)
-                          affected, or None for all sectors (default: None)
-                          -- e.g. a single energy sector instead of an
-                          economy-wide trade cost.
+            'sectors'   : 0-indexed positions into whatever sector list the
+                          data uses (0..N-1 -- WIOD's N=30, or however many
+                          sectors a directly-supplied `haio` has), or None
+                          for all sectors (default: None) -- e.g. a single
+                          energy sector instead of an economy-wide trade
+                          cost.
             'intensity' : shock size in percent -- see run_scenario()'s
                           module-level docs / README for how to interpret
                           this number. Applied evenly across `ngrid` steps.

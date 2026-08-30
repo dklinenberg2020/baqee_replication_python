@@ -52,11 +52,29 @@ def run_scenario(keep_c, countries, shocks, ngrid=20, sigma=0.9, theta=0.05, gam
 main_load_data = _main_load_data.main_load_data
 io_reorder = _io_reorder.io_reorder
 icio_to_haio = _icio_to_haio.icio_to_haio
+
+
+def load_fontagne_trade_elast(sectors, csv_path=None):
+    """See icio_to_haio.load_fontagne_trade_elast()'s docstring. `csv_path`
+    defaults to this package's own directory rather than the caller's cwd."""
+    return _icio_to_haio.load_fontagne_trade_elast(
+        sectors, csv_path=csv_path or os.path.join(_PKG_DIR, 'fontagne_icio_trade_elast.csv'))
+
+
+def load_combined_trade_elast(sectors, csv_path=None, include_approximate=True, include_placeholder=True):
+    """See icio_to_haio.load_combined_trade_elast()'s docstring. `csv_path`
+    defaults to this package's own directory rather than the caller's cwd."""
+    return _icio_to_haio.load_combined_trade_elast(
+        sectors, csv_path=csv_path or os.path.join(_PKG_DIR, 'combined_trade_elast.csv'),
+        include_approximate=include_approximate, include_placeholder=include_placeholder)
+
+
 value_added_shares = _nested_ces.value_added_shares
 response = _nested_ces.response
 solve_dlambda_F_all = _nested_ces.solve_dlambda_F_all
 
 __all__ = [
     'run', 'run_scenario', 'main_load_data', 'io_reorder', 'icio_to_haio',
+    'load_fontagne_trade_elast', 'load_combined_trade_elast',
     'value_added_shares', 'response', 'solve_dlambda_F_all',
 ]

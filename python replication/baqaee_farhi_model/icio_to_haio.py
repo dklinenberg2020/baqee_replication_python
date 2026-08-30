@@ -27,18 +27,16 @@ a CSV in this shape):
     into one total per country itself (`fd_categories` below) -- you do
     not need to pre-sum them.
 
-NOT YET RUN AGAINST A REAL DOWNLOADED OECD ICIO RELEASE in this repository.
-The actual current data file (2017-2022_EXT.zip, ~136MB, referenced from
-OECD's ICIO page) is hosted on www.oecd.org behind a Cloudflare bot
-challenge that a plain HTTP client cannot pass -- unlike the documentation
-PDFs/README above, which OECD happens to also serve unprotected from
-stats.oecd.org. Getting a real file into this loader therefore needs either
-a manual browser download (see baqaee_farhi_model/README.md for exactly
-what to do with it once downloaded) or a different access path; once
-obtained, the parsing/normalization logic here has been run end-to-end
-against a real 2022 file (81 countries x 50 sectors, the "SML" per-year
-release) -- see baqaee_farhi_model/README.md for the real scenario result
-and the data quirks that run surfaced.
+RUN END TO END AGAINST A REAL DOWNLOADED OECD ICIO RELEASE (81 countries x
+50 sectors, the 2022 "SML" per-year file) -- see baqaee_farhi_model/README.md
+for the real scenario result and the data quirks that run surfaced. Getting
+a copy of your own needs a manual browser download: the actual data file
+(2017-2022_EXT.zip or similar, ~136MB, referenced from OECD's ICIO page) is
+hosted on www.oecd.org behind a Cloudflare bot challenge that a plain HTTP
+client cannot pass -- unlike the documentation PDFs/README above, which
+OECD happens to also serve unprotected from stats.oecd.org. See
+baqaee_farhi_model/README.md's "Getting the real data into your own copy"
+for exactly what to do with it once downloaded.
 
 ALWAYS EXCLUDE SECTOR 'T' when using real ICIO data with this model --
 "activities of households as employers... for own use" is, by
@@ -53,26 +51,33 @@ Two known ICIO-specific gaps, both documented in baqaee_farhi_model/README.md:
       heterogeneity), matching main_load_data.py's ability to infer any
       factor-category count from alpha_VA's own shape. Pass your own
       alpha_VA if you have a supplementary factor-split source.
-    - No trade elasticities of its own -- must be supplied externally.
-      `fontagne_icio_trade_elast.csv` in this directory is the real
-      Fontagne-Guimbard-Orefice "New ICIO classification" (March 2026
-      update, https://sites.google.com/view/product-level-trade-elasticity)
-      download -- confirmed to use the exact same sector codes as the real
-      ICIO file (`B06`, `C24A`, `C24B`, etc.), so the "New" vs. "Old"
-      classification call was correct. See `load_fontagne_trade_elast()`
-      below and its SIGN CONVENTION CAVEAT before treating its output as
-      ground truth.
+    - No trade elasticities of its own -- must be supplied externally. Use
+      `load_combined_trade_elast()` (48 of ICIO's 49 non-'T' sectors
+      covered) rather than `load_fontagne_trade_elast()` alone (28
+      sectors, goods only) unless you specifically want to exclude the
+      services/WIOD-fallback layers -- see combined_trade_elast.csv and
+      build_combined_trade_elast.py's module docstring for exactly what
+      each of the three underlying sources covers and how confidently.
 
-fontagne_icio_trade_elast.csv covers only 32 of the ~48 non-'T' ICIO
-sectors -- trade elasticities are only estimable for tradable goods, so
-most services (F, G, I, K, L, N, O, P, Q, S, ...) have no row at all, which
-is expected, not a download error. Of those 32, four have `epsilon_icio ==
-NA` even though the sector itself has a row: A02 (forestry), B05 (coal
-mining), D (electricity/gas supply), R (recreation) -- Fontagne et al.'s own
-estimation didn't converge for these, for whatever reason (thin trade
-volume, insufficient tariff variation for identification). B06 (crude
-petroleum and natural gas extraction -- what a Hormuz-type scenario would
-actually shock) DOES have a valid estimate: -5.44.
+fontagne_icio_trade_elast.csv (the raw Fontagne-Guimbard-Orefice download
+alone, before combining with anything else) covers only 32 of ICIO's 49
+non-'T' sectors -- trade elasticities are only estimable for tradable
+goods, so most services (F, G, I, K, L, N, O, P, Q, S, ...) have no row at
+all, which is expected, not a download error. Of those 32, four have
+`epsilon_icio == NA` even though the sector itself has a row: A02
+(forestry), B05 (coal mining), D (electricity/gas supply), R (recreation)
+-- Fontagne et al.'s own estimation didn't converge for these, for
+whatever reason (thin trade volume, insufficient tariff variation for
+identification). B06 (crude petroleum and natural gas extraction -- what a
+Hormuz-type scenario would actually shock) DOES have a valid estimate:
+-5.44. combined_trade_elast.csv fills all four of those NA sectors, plus
+B09 (which was never in Fontagne's file at all, not even as an NA row):
+R from Ahmad & Schreiber (2024)'s `ros`, and A02/B05/B09/D from the
+original paper's own WIOD data (see build_combined_trade_elast.py) -- D's
+fill is flagged `mapping_quality='placeholder'` there since it isn't a
+real estimate, just the paper's own admitted flat default. Only O is
+still missing from combined_trade_elast.csv, deliberately (see
+build_combined_trade_elast.py's docstring for why).
 """
 import numpy as np
 import pandas as pd

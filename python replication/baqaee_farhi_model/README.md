@@ -156,13 +156,16 @@ ICIO file itself) is the real Fontagne-Guimbard-Orefice "New ICIO
 classification" download; `load_fontagne_trade_elast(sectors)` reads it and
 converts to `nested_ces.py`'s convention. **Two things worth knowing before
 trusting its numbers**:
-1. It only covers **32 of ICIO's ~48 non-`T` sectors** -- trade elasticities
+1. It only covers **32 of ICIO's 49 non-`T` sectors** -- trade elasticities
    are only estimable for tradable goods, so most services (`F`, `G`, `I`,
    `K`, `L`, `N`, `O`, `P`, `Q`, `S`, ...) have no row at all, and it's
    missing `B09` too. Of the 32 it does have, 4 are `NA` anyway (`A02`,
    `B05`, `D`, `R`) -- Fontagne et al.'s own estimation didn't converge for
    those. `B06` (crude petroleum and natural gas -- what a Hormuz scenario
-   actually needs) does have a valid value: -5.44.
+   actually needs) does have a valid value: -5.44. (`combined_trade_elast.csv`,
+   introduced further below, fills all of these gaps except `O` -- use that
+   instead of this raw file unless you specifically want goods-only,
+   tariff-based estimates.)
 2. **The sign/offset conversion is a plausible derivation, not an
    independently verified fact.** The CSV reports a negative number
    (`epsilon_icio`); `nested_ces.py` needs a positive `trade_elast` where
@@ -217,8 +220,8 @@ building the HAIO dict -- see `_fold_excluded_into_row()`'s docstring.
 Always pass this unless your `countries` list already covers every country
 in the file.
 
-**Getting `trade_elast`**: ICIO has none of its own (see "Two known
-ICIO-specific gaps" above). Three layers exist here:
+**Getting `trade_elast`**: ICIO has none of its own (see `icio_to_haio.py`'s
+module docstring, "Two known ICIO-specific gaps"). Three layers exist here:
 
 1. `fontagne_icio_trade_elast.csv` / `load_fontagne_trade_elast()` -- the
    raw Fontagne, Guimbard and Orefice download (product-level trade
@@ -403,7 +406,9 @@ shocks can be combined in one run):
 {
     'sellers':   [3],           # 1-indexed positions *within keep_c* (not WIOD country codes)
     'buyers':    [1, 2],        # same indexing; None = all countries
-    'sectors':   None,          # 0-indexed WIOD sector indices (0..29); None = all 30 sectors
+    'sectors':   None,          # 0-indexed positions into whatever sector list the data uses
+                                 # (WIOD: 0..29; a directly-supplied haio: however many it has);
+                                 # None = all sectors
     'intensity': 150,           # see "Interpreting intensity" below
 }
 ```
