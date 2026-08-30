@@ -133,16 +133,20 @@ def load_fontagne_trade_elast(sectors, csv_path='fontagne_icio_trade_elast.csv')
     site) before trusting this for anything beyond illustrative use.
 
     Raises KeyError for any requested sector missing from the CSV entirely
-    (~half of ICIO's non-'T' sectors -- see module docstring), and leaves
-    NaN for sectors present but with epsilon_icio == NA (A02, B05, D, R at
-    last check) -- both cases need a caller decision (exclude the sector,
-    or substitute a literature value from ../python-second-order/sigma_literature.py),
-    not a silent default.
+    (~half of ICIO's non-'T' sectors -- see module docstring) OR present but
+    with epsilon_icio == NA (A02, B05, D, R at last check) -- both cases
+    need a caller decision (exclude the sector, or substitute a literature
+    value from ../python-second-order/sigma_literature.py), not a silent
+    NaN that would otherwise propagate unnoticed into nested_ces.py's
+    arithmetic.
     """
     df = pd.read_csv(csv_path, index_col='icio2025')
     missing = [s for s in sectors if s not in df.index]
     if missing:
         raise KeyError(f'sectors not in {csv_path} (no trade elasticity estimated at all): {missing}')
+    na = [s for s in sectors if pd.isna(df.loc[s, 'epsilon_icio'])]
+    if na:
+        raise KeyError(f'sectors in {csv_path} but epsilon_icio is NA (estimation did not converge): {na}')
     return -df.loc[sectors, 'epsilon_icio'].to_numpy(dtype=float)
 
 
