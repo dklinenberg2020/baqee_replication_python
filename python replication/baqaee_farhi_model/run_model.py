@@ -56,6 +56,22 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
             'intensity' : shock size in percent -- see run_scenario()'s
                           module-level docs / README for how to interpret
                           this number. Applied evenly across `ngrid` steps.
+            'attribute_to' : 'seller' (default) or 'buyer' -- which side's
+                          domestic technology absorbs the iceberg-cost
+                          shock for GDP-accounting purposes (see `dlogY`
+                          below). The theory paper models an iceberg cost
+                          as a Hicks-neutral productivity shock to a
+                          fictional specialized importer/exporter, and is
+                          explicit that *which* country that fictional
+                          producer belongs to is a free modeling choice
+                          that does not affect welfare or real allocations
+                          at all (confirmed below: `dlogW` is identical
+                          regardless of this key) -- it only changes how
+                          the SAME real event gets attributed across
+                          countries' GDP. 'seller' matches standard FOB
+                          export accounting (the exporter's measured
+                          output absorbs the friction); 'buyer' instead
+                          attributes it to the importer's absorption.
         Multiple legs are summed, so independent shocks (e.g. a Gulf-wide
         cutoff and a separate bilateral effect) can be combined in one run.
         The paper's own EU-vs-Russia scenario is
@@ -64,8 +80,33 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
 
     Returns
     -------
-    dlogW_sum : (C,) array, cumulative log change in real income by country
-        (last entry is the appended ROW country).
+    dlogW_sum : (C,) array, cumulative log change in real income (welfare)
+        by country (last entry is the appended ROW country).
+    dlogY_sum : (C,) array, cumulative log change in real GDP by country,
+        via Theorem 1 of the theory paper under no initial wedges
+        (Corollary 1): a Domar-weighted sum of the technology shocks
+        attributed to each country's own producers, using each step's
+        CURRENT sales shares (`lambda_CN`) to both weight and to derive
+        each country's own GDP share (summing its producers' world-sales
+        shares) -- GDP is genuinely a different object from GNE/welfare at
+        the country level (only equal in aggregate, at the world level),
+        and under this no-wedge scope a country's GDP only moves to the
+        extent ITS OWN producers were directly handed a technology shock
+        (via `attribute_to` above) -- a pure *welfare* loss from paying
+        more for someone else's good, with nothing about your own
+        producers' technology changing, does not move your own GDP to
+        first order (see Corollary 1's "without wedges... foreign shocks
+        do not affect real GDP").
+    dlogy_sum : (CN,) array, cumulative log change in each individual
+        producer's own real output/quantity (Corollary 3:
+        `dlogy_i = dlambda_i/lambda_i - dlogp_i`, using the same per-step
+        sales-share and price changes `response()` already computes for
+        the converged step, just never previously returned). Producer i's
+        position is `c*N + n` for country c (0-indexed within whichever
+        `countries`/`keep_c` ordering the data uses) and sector n
+        (0-indexed, matching `shocks[...]['sectors']`'s own indexing) --
+        unlike `dlogY_sum`, this needs no `attribute_to` choice: it is
+        unambiguous and unaffected by it.
     """
     if haio is None:
         Omega, beta, alpha_VA, alpha, trade_elast, GDP_weights = io_reorder(keep_c, data_dir=data_dir)
@@ -89,7 +130,31 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
     data['Phi_F'] = Phi_F
 
     # Precompute each leg's 0-indexed positions and per-step intensity once.
+    # Also precompute dlogA (CN,): the fixed per-step technology shock
+    # attributed to whichever side's producers `attribute_to` names, for
+    # the GDP calculation below (see Returns -- this is entirely separate
+    # bookkeeping from dlogtau/dX above, which is unaffected by
+    # `attribute_to` and drives the already-validated dlogW/equilibrium
+    # machinery exactly as before).
+    #
+    # The naive version of this -- hitting the attributed country's WHOLE
+    # sector with the full shock intensity -- massively overstates the GDP
+    # effect: e.g. a Russia-to-Germany-only gas shock would otherwise imply
+    # ALL of Russia's gas output (including what it sells elsewhere, or
+    # uses domestically) lost productivity, not just the fraction actually
+    # exported to Germany. So each attributed producer's dlogA is scaled by
+    # the SHARE of its relevant trade flow that this leg's buyer/seller set
+    # actually represents, using baseline (pre-shock) data -- a producer
+    # whose sales are 10% to the shocked buyer set gets 10% of the per-step
+    # intensity, not the full amount.
+    chi_std_initial = data['chi_std'][:C].copy()
+    lambda_CN_initial = data['lambda_CN'].copy()
+    Omega_total_C_initial = data['Omega_total_C'].copy()
+    Omega_total_tilde_initial = data['Omega_total_tilde'].copy()
+    Omega_s_initial = data['Omega_s'].copy()
+
     legs = []
+    dlogA = np.zeros(CN)
     for leg in shocks:
         sellers = np.asarray(leg['sellers'], dtype=int) - 1
         buyers = leg.get('buyers')
@@ -99,7 +164,50 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
         intensity_grid = np.log(1 + leg['intensity'] / 100) / ngrid
         legs.append((sellers, buyers, sectors, intensity_grid))
 
+        buyer_producer_rows = C + (buyers[:, None] * N + np.arange(N)[None, :]).ravel()
+
+        attribute_to = leg.get('attribute_to', 'seller')
+        if attribute_to == 'seller':
+            # For each shocked (seller, sector): what share of that
+            # producer's total sales (lambda_CN_initial) goes to the
+            # shocked buyer set -- summing household purchases
+            # (Omega_total_C) and every shocked buyer's own producers'
+            # purchases (Omega_total_tilde), each weighted by the buying
+            # party's own size (chi_std/lambda_CN), since Omega is a
+            # share, not a level.
+            for s in sellers:
+                cols = s * N + sectors
+                total_sales = lambda_CN_initial[C + cols]
+                hh = (chi_std_initial[buyers, None] * Omega_total_C_initial[buyers][:, cols]).sum(axis=0)
+                prod = (lambda_CN_initial[buyer_producer_rows, None]
+                        * Omega_total_tilde_initial[buyer_producer_rows][:, C + cols]).sum(axis=0)
+                share = np.divide(hh + prod, total_sales, out=np.zeros_like(total_sales), where=total_sales != 0)
+                dlogA[cols] -= intensity_grid * share
+        elif attribute_to == 'buyer':
+            # Symmetric logic from the buyer's side: what share of each
+            # shocked buyer-producer's total spending on this SECTOR
+            # (Omega_s, summed across every origin country) is specifically
+            # these shocked sellers -- i.e. how reliant is this buyer's
+            # sector-n input bundle on these particular sellers, versus
+            # other origins (including domestic) for the same good. Unlike
+            # the seller case, no household term: GDP (Theorem 1) sums over
+            # producers, and the "specialized importer" is itself a
+            # producer -- household purchases don't have one.
+            for b in buyers:
+                prod_rows = C + b * N + np.arange(N)  # L-indexed: for Omega_total_tilde's rows
+                cn_rows = b * N + sectors  # CN-indexed (no +C): for Omega_s and dlogA
+                sector_total_prod = Omega_s_initial[cn_rows, sectors]
+                from_sellers_prod = Omega_total_tilde_initial[prod_rows[sectors][:, None],
+                                                                C + (sellers[None, :] * N + sectors[:, None])].sum(axis=1)
+                share_prod = np.divide(from_sellers_prod, sector_total_prod,
+                                        out=np.zeros_like(sector_total_prod), where=sector_total_prod != 0)
+                dlogA[cn_rows] -= intensity_grid * share_prod
+        else:
+            raise ValueError(f"attribute_to must be 'seller' or 'buyer', got {attribute_to!r}")
+
     dlogW = np.zeros((C, ngrid))
+    dlogY = np.zeros((C, ngrid))
+    dlogy = np.zeros((CN, ngrid))
 
     for i in range(ngrid):
         dlogt = np.zeros((C + CN, CN + CF))
@@ -126,6 +234,24 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
         # composite for a `countries` list that already covers everyone).
         chi_std_C = data['chi_std'][:C]
         dlogW[:, i] = np.divide(dchi_std[:C], chi_std_C, out=np.zeros(C), where=chi_std_C != 0) - dlogP_Vec[:C]
+
+        # --- GDP (Theorem 1 / Corollary 1, no initial wedges) and producer
+        # output (Corollary 3), using THIS step's current sales shares.
+        # A country's GDP share is derived on the fly as the sum of its own
+        # producers' world sales shares (lambda_CN's producer block), the
+        # same Domar-weight object Hulten's theorem always uses -- not
+        # drawn from the (GNE-based, generally different) GDP_weights/
+        # GNE_weights_initial baseline.
+        lambda_producers = data['lambda_CN'][C:]  # (CN,), current step
+        GDP_share_c = lambda_producers.reshape(C, N).sum(axis=1)  # (C,)
+        GDP_share_safe = np.where(GDP_share_c == 0, 1, GDP_share_c)
+        lambdaY = lambda_producers / np.repeat(GDP_share_safe, N)
+        dlogY[:, i] = (lambdaY * dlogA).reshape(C, N).sum(axis=1)
+
+        dlambda_producers = dlambda_result[C:C + CN]
+        dlogP_producers = dlogP_Vec[C:C + CN]
+        dlogy[:, i] = np.divide(dlambda_producers, lambda_producers,
+                                 out=np.zeros(CN), where=lambda_producers != 0) - dlogP_producers
 
         # --- Update Omega_total_tilde and all quantities derived from it,
         # mirroring the MATLAB "Update variables" block -----------------
@@ -171,7 +297,9 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
         data['Omega_total_N'] = data['Omega_total_N'] + dOmega_temp
 
     dlogW_sum = dlogW.sum(axis=1)
-    return dlogW_sum, data
+    dlogY_sum = dlogY.sum(axis=1)
+    dlogy_sum = dlogy.sum(axis=1)
+    return dlogW_sum, dlogY_sum, dlogy_sum, data
 
 
 def run_scenario(keep_c, countries, shocks, ngrid=20,
@@ -182,23 +310,43 @@ def run_scenario(keep_c, countries, shocks, ngrid=20,
     world aggregate (same units), and the elasticity parameters that produced
     them, so a result is self-describing without needing to track down which
     run() call it came from. See `run()`'s docstring for the `shocks` format
-    and for what passing `haio` directly (a non-WIOD dataset) does.
+    (including `attribute_to`, which only affects `dlogY`/`World_Y` below,
+    never `dlogW`/`World`) and for what passing `haio` directly (a non-WIOD
+    dataset) does.
 
     Returns
     -------
     dict with:
-        'dlogW' : {country code -> log GNE change}, one entry per `countries`
+        'dlogW' : {country code -> log GNE/welfare change}, one entry per `countries`
         'World' : GNE-weighted world aggregate log GNE change
+        'dlogY' : {country code -> log real GDP change} -- a genuinely
+            different object from `dlogW` at the country level (only equal
+            in aggregate); see `run()`'s docstring for exactly what it
+            captures and why it depends on `attribute_to`.
+        'World_Y' : GDP-weighted world aggregate log GDP change (uses the
+            same baseline weights as `World`, since this codebase's HAIO
+            contract provides a single baseline GDP/GNE share array -- see
+            main_load_data.py's module docstring)
+        'dlogy' : {country code -> list of per-sector log real output
+            changes}, 0-indexed in whatever sector order the data uses
+            (same convention as `shocks[...]['sectors']`) -- Corollary 3's
+            producer-level quantity change, unrelated to `attribute_to`.
         'elasticities' : {'sigma', 'theta', 'gamma', 'epsilon'} used for this run
         'ngrid', 'shocks' : shock discretization settings used
     """
-    dlogW_sum, data = run(keep_c, shocks, ngrid=ngrid,
-                           sigma=sigma, theta=theta, gamma=gamma, epsilon=epsilon,
-                           data_dir=data_dir, haio=haio)
-    world = data['GNE_weights_initial'] @ dlogW_sum
+    dlogW_sum, dlogY_sum, dlogy_sum, data = run(
+        keep_c, shocks, ngrid=ngrid, sigma=sigma, theta=theta, gamma=gamma, epsilon=epsilon,
+        data_dir=data_dir, haio=haio)
+    world_weights = data['GNE_weights_initial']
+    world = world_weights @ dlogW_sum
+    world_y = world_weights @ dlogY_sum
+    N = data['N']
     return dict(
         dlogW=dict(zip(countries, dlogW_sum)),
         World=world,
+        dlogY=dict(zip(countries, dlogY_sum)),
+        World_Y=world_y,
+        dlogy={c: dlogy_sum[i * N:(i + 1) * N].tolist() for i, c in enumerate(countries)},
         elasticities=dict(sigma=sigma, theta=theta, gamma=gamma, epsilon=epsilon),
         ngrid=ngrid,
         shocks=shocks,
