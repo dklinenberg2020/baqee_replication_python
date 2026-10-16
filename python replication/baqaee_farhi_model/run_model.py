@@ -137,6 +137,18 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
         producers' technology changing, does not move your own GDP to
         first order (see Corollary 1's "without wedges... foreign shocks
         do not affect real GDP").
+    dlogY_sector_sum : (CN,) array, cumulative log change EACH PRODUCER
+        contributes to its own country's `dlogY_sum` -- i.e. Corollary 1's
+        sum broken out term-by-term instead of collapsed to the country
+        total (`dlogY_sum[c] == dlogY_sector_sum[c*N:(c+1)*N].sum()`
+        exactly). Under this no-wedge scope these are exactly zero for
+        every producer that wasn't directly handed a technology shock
+        (`dlogA == 0` there, by construction of `attribute_to` above) --
+        GDP decomposes entirely onto whichever sector(s) were actually
+        shocked, unlike `dlogy_sum` below, which moves for every producer
+        via general-equilibrium reallocation and is NOT a decomposition of
+        `dlogY_sum` (the two are different objects that happen to share an
+        indexing convention).
     dlogy_sum : (CN,) array, cumulative log change in each individual
         producer's own real output/quantity (Corollary 3:
         `dlogy_i = dlambda_i/lambda_i - dlogp_i`, using the same per-step
@@ -145,8 +157,8 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
         position is `c*N + n` for country c (0-indexed within whichever
         `countries`/`keep_c` ordering the data uses) and sector n
         (0-indexed, matching `shocks[...]['sectors']`'s own indexing) --
-        unlike `dlogY_sum`, this needs no `attribute_to` choice: it is
-        unambiguous and unaffected by it.
+        unlike `dlogY_sum`/`dlogY_sector_sum`, this needs no `attribute_to`
+        choice: it is unambiguous and unaffected by it.
     """
     if haio is None:
         Omega, beta, alpha_VA, alpha, trade_elast, GDP_weights = io_reorder(keep_c, data_dir=data_dir)
@@ -247,6 +259,7 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
 
     dlogW = np.zeros((C, ngrid))
     dlogY = np.zeros((C, ngrid))
+    dlogY_sector = np.zeros((CN, ngrid))
     dlogy = np.zeros((CN, ngrid))
 
     for i in range(ngrid):
@@ -286,7 +299,16 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
         GDP_share_c = lambda_producers.reshape(C, N).sum(axis=1)  # (C,)
         GDP_share_safe = np.where(GDP_share_c == 0, 1, GDP_share_c)
         lambdaY = lambda_producers / np.repeat(GDP_share_safe, N)
-        dlogY[:, i] = (lambdaY * dlogA).reshape(C, N).sum(axis=1)
+        # Per-producer contribution to its own country's GDP change -- each
+        # sector's term in Corollary 1's sum, BEFORE collapsing to the
+        # country total. Under this no-wedge scope these are exactly zero
+        # for every producer that wasn't directly handed a technology
+        # shock (dlogA==0 there), by construction -- GDP decomposes
+        # entirely onto whichever sector(s) `attribute_to` actually hit,
+        # unlike `dlogy` below, which moves for every producer via
+        # general-equilibrium reallocation.
+        dlogY_sector[:, i] = lambdaY * dlogA
+        dlogY[:, i] = dlogY_sector[:, i].reshape(C, N).sum(axis=1)
 
         dlambda_producers = dlambda_result[C:C + CN]
         dlogP_producers = dlogP_Vec[C:C + CN]
@@ -338,8 +360,9 @@ def run(keep_c, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05
 
     dlogW_sum = dlogW.sum(axis=1)
     dlogY_sum = dlogY.sum(axis=1)
+    dlogY_sector_sum = dlogY_sector.sum(axis=1)
     dlogy_sum = dlogy.sum(axis=1)
-    return dlogW_sum, dlogY_sum, dlogy_sum, data
+    return dlogW_sum, dlogY_sum, dlogY_sector_sum, dlogy_sum, data
 
 
 def run_scenario(keep_c, countries, shocks, ngrid=20,
@@ -367,14 +390,21 @@ def run_scenario(keep_c, countries, shocks, ngrid=20,
             same baseline weights as `World`, since this codebase's HAIO
             contract provides a single baseline GDP/GNE share array -- see
             main_load_data.py's module docstring)
+        'dlogY_sector' : {country code -> list of per-sector contributions
+            to that country's `dlogY`}, 0-indexed like `shocks[...]['sectors']`
+            -- sums exactly to `dlogY[country]`. Under this no-wedge scope,
+            zero everywhere except the sector(s) `attribute_to` actually
+            shocked -- NOT the same object as `dlogy` below.
         'dlogy' : {country code -> list of per-sector log real output
             changes}, 0-indexed in whatever sector order the data uses
             (same convention as `shocks[...]['sectors']`) -- Corollary 3's
-            producer-level quantity change, unrelated to `attribute_to`.
+            producer-level quantity change, unrelated to `attribute_to`,
+            and moves for every producer via general-equilibrium
+            reallocation (not a decomposition of `dlogY`).
         'elasticities' : {'sigma', 'theta', 'gamma', 'epsilon'} used for this run
         'ngrid', 'shocks' : shock discretization settings used
     """
-    dlogW_sum, dlogY_sum, dlogy_sum, data = run(
+    dlogW_sum, dlogY_sum, dlogY_sector_sum, dlogy_sum, data = run(
         keep_c, shocks, ngrid=ngrid, sigma=sigma, theta=theta, gamma=gamma, epsilon=epsilon,
         data_dir=data_dir, haio=haio)
     world_weights = data['GNE_weights_initial']
@@ -386,6 +416,7 @@ def run_scenario(keep_c, countries, shocks, ngrid=20,
         World=world,
         dlogY=dict(zip(countries, dlogY_sum)),
         World_Y=world_y,
+        dlogY_sector={c: dlogY_sector_sum[i * N:(i + 1) * N].tolist() for i, c in enumerate(countries)},
         dlogy={c: dlogy_sum[i * N:(i + 1) * N].tolist() for i, c in enumerate(countries)},
         elasticities=dict(sigma=sigma, theta=theta, gamma=gamma, epsilon=epsilon),
         ngrid=ngrid,
