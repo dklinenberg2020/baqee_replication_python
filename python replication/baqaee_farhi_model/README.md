@@ -391,8 +391,8 @@ package wrapper is purely additive.
 
 | Function | What it does |
 |---|---|
-| `run_scenario(keep_c, countries, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05, data_dir=None, haio=None)` | The one you want. Runs the model and returns a labeled, self-describing result. `sigma`/`theta`/`gamma`/`epsilon` are the model's four structural nested-CES elasticities (defaults = the paper's own calibration) -- see `run()`'s docstring in `run_model.py` for exactly which substitution margin each one governs; they're unrelated to `trade_elast`, which is the one per-sector elasticity actually estimated from data. |
-| `run(keep_c, shocks, ngrid=20, ..., haio=None)` | Lower-level: same computation, returns a raw `(C,)` numpy array instead of a labeled dict. |
+| `run_scenario(keep_c, countries, shocks, ngrid=20, sigma=0.9, theta=0.05, gamma=0.5, epsilon=0.05, data_dir=None, haio=None)` | The one you want. Runs the model and returns a labeled, self-describing result: welfare (`dlogW`/`World`), real GDP (`dlogY`/`World_Y`, see below), and per-sector real output (`dlogy`). `sigma`/`theta`/`gamma`/`epsilon` are the model's four structural nested-CES elasticities (defaults = the paper's own calibration) -- see `run()`'s docstring in `run_model.py` for exactly which substitution margin each one governs; they're unrelated to `trade_elast`, which is the one per-sector elasticity actually estimated from data. |
+| `run(keep_c, shocks, ngrid=20, ..., haio=None)` | Lower-level: same computation, returns `(dlogW_sum, dlogY_sum, dlogy_sum, data)` as raw numpy arrays instead of a labeled dict. |
 | `main_load_data(haio, initial_tariff_index, factor_index)` | Source-agnostic: turns a standardized HAIO dict into the model's standard-form inputs. Normally called for you by `run()`. |
 | `io_reorder(keep_c, data_dir)` | The WIOD-specific loader: WIOD 2008 `.mat` files -> a HAIO dict. |
 | `icio_to_haio(df, countries, sectors, trade_elast, row_label=None, ...)` | An OECD-ICIO loader, verified against a real downloaded file: a plain-CSV-shaped DataFrame -> a HAIO dict. Pass `row_label` (e.g. `'ROW'`) to fold excluded countries in rather than dropping them -- see below. |
@@ -406,11 +406,53 @@ package wrapper is purely additive.
 {
     'dlogW': {country_code: log_GNE_change, ...},   # NOT percent -- multiply by 100 yourself
     'World': log_GNE_change,                         # GNE-weighted world aggregate, same units
+    'dlogY': {country_code: log_GDP_change, ...},    # real GDP, NOT the same object as dlogW -- see below
+    'World_Y': log_GDP_change,                       # GDP-weighted world aggregate, same units
+    'dlogy': {country_code: [log_output_change, ...]},  # per-sector real output, 0-indexed like shocks[...]['sectors']
     'elasticities': {'sigma': ..., 'theta': ..., 'gamma': ..., 'epsilon': ...},
     'ngrid': ...,
     'shocks': [...],   # echoed back, so the result is self-describing
 }
 ```
+
+**`dlogY`/`World_Y`/`dlogy` are GDP and output, not welfare** -- a genuinely different
+pair of objects from `dlogW`/`World`, grounded directly in Baqaee & Farhi's theory
+paper ("Networks, Barriers, and Trade", Section 2.2's equation (1) for real GDP,
+Theorem 1/Corollary 1 for the practical no-wedge formula this implements, Corollary 3
+for `dlogy`). GDP and GNE/welfare are equal only in aggregate (at the world level);
+at the country level they measure different things -- GNE/welfare is about what a
+country's residents can *consume*, GDP is about what a country's own producers
+*produce*. Concretely, under this codebase's scope (no initial wedges), a country's
+GDP only moves to the extent its OWN producers were directly handed a productivity
+shock: paying more for an import that nothing about your own producers changed does
+not move your own GDP to first order, even though it clearly hurts your welfare.
+
+**This means `dlogY` needs an extra modeling choice `dlogW` does not: `attribute_to`.**
+An iceberg trade cost is, in the theory paper's own framework, modeled as a
+Hicks-neutral productivity shock to a fictional "specialized importer/exporter"
+representing the trading technology -- and the paper is explicit that *which*
+country this fictional producer belongs to doesn't affect welfare or real
+allocations at all (confirmed numerically: `dlogW` is bit-identical regardless of
+this setting), but it does change which country's GDP absorbs the hit. Each shock
+leg takes an optional `'attribute_to'` key, `'seller'` (default) or `'buyer'`:
+```python
+shocks=[{'sellers': [RUS], 'buyers': EU, 'sectors': None, 'intensity': 150,
+         'attribute_to': 'seller'}]   # default if omitted -- matches FOB export accounting
+```
+- `'seller'`: the shock hits the exporting country's own measured output (e.g.
+  Russia's GDP falls, reflecting degraded export capacity).
+- `'buyer'`: the shock instead hits the importing country's own measured output
+  (e.g. the EU's GDP falls, reflecting degraded import absorption capacity).
+
+Either way, the shock is scaled per producer by the SHARE of that producer's
+relevant trade flow the shock leg actually represents (using baseline, pre-shock
+trade shares) -- not applied at full intensity to the attributed country's whole
+sector. Without this scaling, a bilateral Russia-to-Germany-only shock would
+otherwise imply ALL of Russia's gas output lost productivity, including the
+portion sold to every other country and used domestically, wildly overstating
+the GDP effect (an early, uncorrected version of this feature did exactly that --
+a 150% cost shock on one bilateral flow translated into a nonsensical ~90% drop in
+Russia's GDP, before the trade-share scaling was added).
 
 ### The `shocks` parameter
 
@@ -425,6 +467,8 @@ shocks can be combined in one run):
                                  # (WIOD: 0..29; a directly-supplied haio: however many it has);
                                  # None = all sectors
     'intensity': 150,           # see "Interpreting intensity" below
+    'attribute_to': 'seller',   # optional, default 'seller' -- see "run_scenario()'s return
+                                 # value" above; only affects dlogY/World_Y/dlogy, never dlogW
 }
 ```
 
